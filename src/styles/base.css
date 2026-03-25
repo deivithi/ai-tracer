@@ -1,0 +1,58 @@
+:root {
+  color-scheme: dark;
+  font-family: 'IBM Plex Sans', sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  --bg: #050816;
+  --bg-elevated: rgba(11, 19, 43, 0.84);
+  --bg-soft: rgba(12, 16, 28, 0.78);
+  --text: #f8fafc;
+  --muted: #9fb0d0;
+  --line: rgba(112, 146, 255, 0.18);
+  --line-strong: rgba(145, 199, 255, 0.32);
+  --accent: #6dd3ff;
+  --accent-2: #78f1c6;
+  --warning: #ffc86d;
+  --danger: #ff7e8a;
+  --success: #88ffb4;
+  --shadow: 0 24px 80px rgba(0, 0, 0, 0.36);
+}
+
+* { box-sizing: border-box; }
+
+html {
+  min-height: 100%;
+  background:
+    radial-gradient(circle at top left, rgba(109, 211, 255, 0.14), transparent 28%),
+    radial-gradient(circle at top right, rgba(120, 241, 198, 0.12), transparent 24%),
+    linear-gradient(180deg, #04060f 0%, #060b1b 48%, #050816 100%);
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  color: var(--text);
+  background: transparent;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+a {
+  color: inherit;
+}
+
+#root {
+  min-height: 100vh;
+}

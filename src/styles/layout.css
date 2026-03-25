@@ -1,0 +1,173 @@
+.app-shell {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: 320px minmax(0, 1fr);
+  gap: 24px;
+  padding: 24px;
+}
+
+.sidebar,
+.panel,
+.hero-shell,
+.banner {
+  backdrop-filter: blur(18px);
+  background: var(--bg-elevated);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+}
+
+.sidebar {
+  padding: 28px;
+  border-radius: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  position: sticky;
+  top: 24px;
+  max-height: calc(100vh - 48px);
+}
+
+.brand-block,
+.panel-header,
+.rail-card-header,
+.feed-topline,
+.field-row,
+.form-actions,
+.panel-actions,
+.attachment-item,
+.handoff-header,
+.phase-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.brand-mark,
+.nav-item-icon,
+.pipeline-icon,
+.banner-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 16px;
+  background: linear-gradient(135deg, rgba(109, 211, 255, 0.18), rgba(120, 241, 198, 0.16));
+  border: 1px solid var(--line-strong);
+}
+
+.brand-mark {
+  width: 52px;
+  height: 52px;
+}
+
+.nav-list,
+.runtime-stack,
+.feed-list,
+.view-stack,
+.artifact-stack,
+.attachment-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.main-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.hero-shell,
+.panel,
+.feature-ribbon,
+.list-card,
+.phase-card,
+.step-card,
+.pipeline-card,
+.insight-card,
+.risk-card,
+.connection-shell,
+.attachments-shell,
+.empty-state,
+.handoff-card {
+  border-radius: 24px;
+}
+
+.hero-shell,
+.panel {
+  padding: 24px;
+}
+
+.hero-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  gap: 18px;
+}
+
+.content-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 20px;
+}
+
+.panel-large {
+  min-height: 70vh;
+}
+
+.panel-side {
+  overflow: hidden;
+}
+
+.hero-grid,
+.cards-grid,
+.phase-grid,
+.handoff-grid,
+.form-grid {
+  display: grid;
+  gap: 16px;
+}
+
+.hero-grid,
+.cards-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.phase-grid,
+.handoff-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.form-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.field-block-wide {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 1180px) {
+  .app-shell,
+  .content-grid,
+  .hero-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    position: static;
+    max-height: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .app-shell {
+    padding: 16px;
+  }
+
+  .hero-grid,
+  .cards-grid,
+  .phase-grid,
+  .handoff-grid,
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+}
