@@ -75,14 +75,14 @@ npm run test:e2e:live
 
 ## Deploy no GitHub Pages
 
-O repositório já está preparado para deploy estático com GitHub Actions.
+A publicação atual usa GitHub Pages em branch dedicada `gh-pages`.
 
 Fluxo esperado:
 
-1. Subir o projeto para um repositório GitHub.
-2. Garantir que a branch default seja `main`.
-3. O workflow `deploy-pages.yml` roda build e publica a pasta `dist/`.
-4. Ativar GitHub Pages em `Settings -> Pages -> Source: GitHub Actions`.
+1. Subir o código-fonte na branch `main`.
+2. Gerar o build de produção com `npm run build`.
+3. Publicar o conteúdo de `dist/` na branch `gh-pages`.
+4. Configurar GitHub Pages para servir `gh-pages` na raiz `/`.
 
 ## Estrutura
 
@@ -97,7 +97,6 @@ src/
   components/
   styles/
 tests-e2e/
-.github/workflows/
 ```
 
 ## Estado atual de qualidade
