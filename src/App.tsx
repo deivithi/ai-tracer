@@ -1,36 +1,78 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { ChevronRight, Download, FolderKanban, KeyRound, Layers3, Orbit, PlayCircle, Radar, RefreshCcw, ShieldCheck, Sparkles, Target, FileSearch } from 'lucide-react'
-import { startTransition, useEffect, useState, type FormEvent } from 'react'
+import {
+  Bot,
+  Command,
+  Download,
+  Eye,
+  EyeOff,
+  FileSearch,
+  FolderKanban,
+  KeyRound,
+  Layers3,
+  Paperclip,
+  PlayCircle,
+  Radar,
+  RefreshCcw,
+  SendHorizontal,
+  ShieldCheck,
+  Sparkles,
+} from 'lucide-react'
+import { startTransition, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { createDemoWorkspace } from './app/demo'
 import { generateExecution, generatePhases, generatePlan, generateVerification } from './app/engine'
 import { exportWorkspaceBundle } from './app/export'
 import { validateConnection } from './app/openrouter'
-import { goalInputSchema, type RunRecord, type TracerWorkspace } from './app/schemas'
+import { goalInputSchema, type ChatMessage, type RunRecord, type TracerWorkspace } from './app/schemas'
 import { clearSessionKey, loadPreferences, loadSessionKey, loadWorkspace, savePreferences, saveSessionKey, saveWorkspace } from './app/storage'
 import type { BannerMessage, RuntimeConnection, RuntimePreferences, ViewId } from './app/types'
 import { DEFAULT_MODEL, createId, formatDate, nowIso, readFiles, resolveHash, setHash } from './app/utils'
-import { ExecutionView } from './components/ExecutionView'
-import { GoalView } from './components/GoalView'
-import { MissionView } from './components/MissionView'
-import { PhasesView } from './components/PhasesView'
-import { PlanView } from './components/PlanView'
-import { Banner, MetricCard, StageProgress } from './components/shared'
-import { VerificationView } from './components/VerificationView'
-import { WorkspaceView } from './components/WorkspaceView'
 
-const viewItems: Array<{ id: ViewId; label: string; kicker: string; icon: typeof Orbit }> = [
-  { id: 'mission', label: 'Mission Control', kicker: 'Visao geral', icon: Orbit },
-  { id: 'goal', label: 'Goal Studio', kicker: 'Entrada', icon: Target },
-  { id: 'plan', label: 'Plan', kicker: 'Arquitetura', icon: Radar },
-  { id: 'phases', label: 'Phases', kicker: 'Sequencia', icon: Layers3 },
-  { id: 'execution', label: 'Execute', kicker: 'Handoff', icon: PlayCircle },
-  { id: 'verification', label: 'Verify', kicker: 'Auditoria', icon: FileSearch },
-  { id: 'workspace', label: 'Workspace', kicker: 'Exportacao', icon: FolderKanban },
+type ComposerMode = 'objective' | 'outcome' | 'constraint' | 'criteria' | 'context' | 'evidence' | 'command'
+
+const composerModes: Array<{ id: ComposerMode; label: string; hint: string }> = [
+  { id: 'objective', label: 'Objetivo', hint: 'Atualiza o objetivo central' },
+  { id: 'outcome', label: 'Resultado', hint: 'Define o resultado desejado' },
+  { id: 'constraint', label: 'Restricao', hint: 'Adiciona uma nova restricao' },
+  { id: 'criteria', label: 'Criterio', hint: 'Adiciona criterio de aceite' },
+  { id: 'context', label: 'Contexto', hint: 'Enriquece a memoria do agente' },
+  { id: 'evidence', label: 'Evidencia', hint: 'Preenche a verificacao final' },
+  { id: 'command', label: 'Comando', hint: 'Dispara /plan, /phases, /execute...' },
+]
+
+const dockViews: Array<{ id: ViewId; label: string }> = [
+  { id: 'mission', label: 'Resumo' },
+  { id: 'goal', label: 'Memoria' },
+  { id: 'plan', label: 'Plan' },
+  { id: 'phases', label: 'Phases' },
+  { id: 'execution', label: 'Execution' },
+  { id: 'verification', label: 'Verify' },
+  { id: 'workspace', label: 'Workspace' },
 ]
 
 function createRun(stage: RunRecord['stage'], status: RunRecord['status'], summary: string, detail: string): RunRecord {
   const timestamp = nowIso()
   return { id: createId('run'), stage, status, startedAt: timestamp, finishedAt: timestamp, summary, detail }
+}
+
+function createMessage(
+  role: ChatMessage['role'],
+  kind: ChatMessage['kind'],
+  text: string,
+  extras?: Partial<Pick<ChatMessage, 'artifactType' | 'stage'>>,
+): ChatMessage {
+  return {
+    id: createId('msg'),
+    role,
+    kind,
+    text,
+    createdAt: nowIso(),
+    artifactType: extras?.artifactType,
+    stage: extras?.stage,
+  }
+}
+
+function truncate(value: string, max: number): string {
+  return value.length > max ? `${value.slice(0, max - 1)}…` : value
 }
 
 function App() {
@@ -39,9 +81,17 @@ function App() {
   const [workspace, setWorkspace] = useState<TracerWorkspace>(() => loadWorkspace() ?? createDemoWorkspace())
   const [activeView, setActiveView] = useState<ViewId>(() => resolveHash(initialPreferences.lastView))
   const [sessionKey, setSessionKeyState] = useState(loadSessionKey())
-  const [banner, setBanner] = useState<BannerMessage>({ tone: 'neutral', title: 'Workspace carregado', body: 'Conecte o OpenRouter para gerar artefatos reais sem expor a chave no deploy.' })
+  const [banner, setBanner] = useState<BannerMessage>({
+    tone: 'neutral',
+    title: 'Agente carregado',
+    body: 'A tela principal agora funciona como um chat operacional. Alimente o contexto e dispare os artefatos sem sair da conversa.',
+  })
   const [isBusy, setIsBusy] = useState<RunRecord['stage'] | null>(null)
   const [connectionDraft, setConnectionDraft] = useState({ apiKey: loadSessionKey(), model: initialPreferences.model || DEFAULT_MODEL })
+  const [composer, setComposer] = useState('')
+  const [composerMode, setComposerMode] = useState<ComposerMode>('objective')
+  const [showKey, setShowKey] = useState(false)
+  const threadRef = useRef<HTMLDivElement | null>(null)
 
   function updatePreferences(transform: (current: RuntimePreferences) => RuntimePreferences) {
     setPreferences((current) => {
@@ -63,6 +113,15 @@ function App() {
     return () => window.removeEventListener('hashchange', onHashChange)
   }, [])
 
+  useEffect(() => {
+    if (!threadRef.current) return
+    if (typeof threadRef.current.scrollTo === 'function') {
+      threadRef.current.scrollTo({ top: threadRef.current.scrollHeight, behavior: 'smooth' })
+      return
+    }
+    threadRef.current.scrollTop = threadRef.current.scrollHeight
+  }, [workspace.conversation.length, isBusy])
+
   const runtime: RuntimeConnection | null = sessionKey ? { apiKey: sessionKey, model: preferences.model, provider: 'openrouter' } : null
   const plan = workspace.artifacts.plan
   const phases = workspace.artifacts.phases
@@ -83,49 +142,72 @@ function App() {
     updateWorkspace((current) => ({ ...current, runs: [run, ...current.runs].slice(0, 60) }))
   }
 
+  function appendMessages(messages: ChatMessage[]) {
+    updateWorkspace((current) => ({ ...current, conversation: [...current.conversation, ...messages].slice(-200) }))
+  }
+
+  function appendMessage(role: ChatMessage['role'], kind: ChatMessage['kind'], text: string, extras?: Partial<Pick<ChatMessage, 'artifactType' | 'stage'>>) {
+    appendMessages([createMessage(role, kind, text, extras)])
+  }
+
   function updateGoalField(field: 'objective' | 'desiredOutcome' | 'contextNotes', value: string) {
     updateWorkspace((current) => ({ ...current, goal: { ...current.goal, [field]: value } }))
   }
 
-  function updateGoalList(field: 'constraints' | 'acceptanceCriteria', value: string) {
-    const items = value.split('\n').map((item) => item.trim()).filter(Boolean).slice(0, 12)
-    updateWorkspace((current) => ({ ...current, goal: { ...current.goal, [field]: items } }))
+  function appendGoalListItem(field: 'constraints' | 'acceptanceCriteria', value: string) {
+    updateWorkspace((current) => ({
+      ...current,
+      goal: {
+        ...current.goal,
+        [field]: [...current.goal[field], value.trim()].filter(Boolean).slice(-12),
+      },
+    }))
   }
 
   async function handleAttachmentImport(files: FileList | null) {
     const result = await readFiles(files)
     if (result.accepted.length > 0) {
-      updateWorkspace((current) => ({ ...current, goal: { ...current.goal, attachments: [...current.goal.attachments, ...result.accepted].slice(0, 6) } }))
+      updateWorkspace((current) => ({
+        ...current,
+        goal: { ...current.goal, attachments: [...current.goal.attachments, ...result.accepted].slice(0, 6) },
+      }))
+      appendMessage('agent', 'status', `${result.accepted.length} arquivo(s) de contexto adicionados ao workspace.`)
     }
     if (result.rejected.length > 0) {
       setBanner({ tone: 'warning', title: 'Alguns arquivos foram rejeitados', body: result.rejected.join(' ') })
+      appendMessage('agent', 'status', `Arquivos rejeitados: ${result.rejected.join(' ')}`)
     }
-  }
-
-  function removeAttachment(attachmentId: string) {
-    updateWorkspace((current) => ({ ...current, goal: { ...current.goal, attachments: current.goal.attachments.filter((item) => item.id !== attachmentId) } }))
   }
 
   async function handleConnect(event: FormEvent) {
     event.preventDefault()
     if (!connectionDraft.apiKey.trim()) {
-      setBanner({ tone: 'warning', title: 'Chave ausente', body: 'Cole uma chave valida do OpenRouter para ativar a geracao live.' })
+      setBanner({ tone: 'warning', title: 'Chave ausente', body: 'Cole uma chave valida do OpenRouter para ativar o chat live.' })
+      appendMessage('agent', 'status', 'Nao encontrei chave para validar o runtime. Cole a chave do OpenRouter e tente novamente.', { stage: 'connect' })
       return
     }
 
     setIsBusy('connect')
     try {
-      const nextRuntime: RuntimeConnection = { apiKey: connectionDraft.apiKey.trim(), model: connectionDraft.model.trim() || DEFAULT_MODEL, provider: 'openrouter' }
+      const nextRuntime: RuntimeConnection = {
+        apiKey: connectionDraft.apiKey.trim(),
+        model: connectionDraft.model.trim() || DEFAULT_MODEL,
+        provider: 'openrouter',
+      }
+
       await validateConnection(nextRuntime)
       saveSessionKey(nextRuntime.apiKey)
       setSessionKeyState(nextRuntime.apiKey)
       updatePreferences((current) => ({ ...current, model: nextRuntime.model, lastValidatedAt: nowIso() }))
       updateWorkspace((current) => ({ ...current, mode: 'live' }))
       appendRun(createRun('connect', 'success', 'Runtime validado com sucesso.', `Modelo conectado: ${nextRuntime.model}`))
-      setBanner({ tone: 'success', title: 'Runtime conectado', body: `OpenRouter validado com ${nextRuntime.model}. A chave ficou apenas nesta sessao do navegador.` })
+      appendMessage('agent', 'status', `Runtime conectado com ${nextRuntime.model}. A chave fica apenas nesta sessao do navegador.`, { stage: 'connect' })
+      setBanner({ tone: 'success', title: 'Runtime conectado', body: `OpenRouter validado com ${nextRuntime.model}. O chat agora pode gerar artefatos reais.` })
     } catch (error) {
-      appendRun(createRun('connect', 'error', 'Falha ao validar o runtime.', error instanceof Error ? error.message : 'Erro desconhecido.'))
-      setBanner({ tone: 'danger', title: 'Falha na conexao', body: error instanceof Error ? error.message : 'Nao foi possivel validar a conexao com o OpenRouter.' })
+      const message = error instanceof Error ? error.message : 'Erro desconhecido.'
+      appendRun(createRun('connect', 'error', 'Falha ao validar o runtime.', message))
+      appendMessage('agent', 'status', `Falha ao validar o runtime: ${message}`, { stage: 'connect' })
+      setBanner({ tone: 'danger', title: 'Falha na conexao', body: message })
     } finally {
       setIsBusy(null)
     }
@@ -136,69 +218,261 @@ function App() {
     setSessionKeyState('')
     setConnectionDraft((current) => ({ ...current, apiKey: '' }))
     updateWorkspace((current) => ({ ...current, mode: 'demo' }))
-    setBanner({ tone: 'neutral', title: 'Runtime desconectado', body: 'A chave foi removida da sessao. Seus artefatos continuam salvos neste navegador.' })
+    appendMessage('agent', 'status', 'Runtime desconectado. O workspace continua salvo, mas o chat volta ao modo demo.', { stage: 'connect' })
+    setBanner({ tone: 'neutral', title: 'Runtime desconectado', body: 'A chave foi removida da sessao. O chat continua com os artefatos locais.' })
   }
 
   async function withStage(stage: RunRecord['stage'], action: () => Promise<void>, successTitle: string, successBody: string) {
     if ((stage === 'plan' && !goalInputSchema.safeParse(workspace.goal).success) || !runtime) {
-      setBanner({ tone: 'warning', title: 'Pre-requisito ausente', body: 'Revise o objetivo e valide o runtime antes de seguir.' })
+      setBanner({ tone: 'warning', title: 'Pre-requisito ausente', body: 'Revise objetivo, resultado desejado e runtime antes de seguir.' })
+      appendMessage('agent', 'status', 'Faltam pre-requisitos para rodar esta etapa. Revise objetivo, resultado desejado e runtime.', { stage })
       return
     }
+
     setIsBusy(stage)
     try {
       await action()
       setBanner({ tone: 'success', title: successTitle, body: successBody })
     } catch (error) {
-      appendRun(createRun(stage, 'error', `Falha em ${stage}.`, error instanceof Error ? error.message : 'Erro desconhecido.'))
-      setBanner({ tone: 'danger', title: `Falha em ${stage}`, body: error instanceof Error ? error.message : 'Erro desconhecido.' })
+      const message = error instanceof Error ? error.message : 'Erro desconhecido.'
+      appendRun(createRun(stage, 'error', `Falha em ${stage}.`, message))
+      appendMessage('agent', 'status', `Falha em ${stage}: ${message}`, { stage })
+      setBanner({ tone: 'danger', title: `Falha em ${stage}`, body: message })
     } finally {
       setIsBusy(null)
     }
   }
 
   async function runPlanStage() {
-    await withStage('plan', async () => {
-      const nextPlan = await generatePlan(workspace.goal, runtime as RuntimeConnection)
-      updateWorkspace((current) => ({ ...current, mode: 'live', artifacts: { ...current.artifacts, plan: nextPlan, phases: null, execution: null, verification: null } }))
-      appendRun(createRun('plan', 'success', 'Plano gerado.', nextPlan.title))
-      navigateTo('plan')
-    }, 'Plano pronto', 'O AI Tracer gerou um plano operacional auditavel e resetou artefatos dependentes para manter coerencia.')
+    await withStage(
+      'plan',
+      async () => {
+        const nextPlan = await generatePlan(workspace.goal, runtime as RuntimeConnection)
+        updateWorkspace((current) => ({
+          ...current,
+          mode: 'live',
+          artifacts: { ...current.artifacts, plan: nextPlan, phases: null, execution: null, verification: null },
+        }))
+        appendRun(createRun('plan', 'success', 'Plano gerado.', nextPlan.title))
+        appendMessages([
+          createMessage('agent', 'artifact', `Plano pronto: ${nextPlan.title}. ${nextPlan.payload.executiveSummary}`, { artifactType: 'plan', stage: 'plan' }),
+          createMessage('agent', 'status', `North star capturado. Primeiro movimento sugerido: ${nextPlan.payload.firstMove}`, { stage: 'plan' }),
+        ])
+        navigateTo('plan')
+      },
+      'Plano pronto',
+      'O agente consolidou o objetivo em um plano operacional auditavel.',
+    )
   }
 
   async function runPhasesStage() {
     if (!plan) return
-    await withStage('phases', async () => {
-      const nextPhases = await generatePhases(workspace.goal, plan, runtime as RuntimeConnection)
-      updateWorkspace((current) => ({ ...current, artifacts: { ...current.artifacts, phases: nextPhases, execution: null, verification: null } }))
-      appendRun(createRun('phases', 'success', 'Fases geradas.', nextPhases.title))
-      navigateTo('phases')
-    }, 'Phases prontas', 'A sequencia foi quebrada em fases com deliverable, inputs, outputs e risco por etapa.')
+    await withStage(
+      'phases',
+      async () => {
+        const nextPhases = await generatePhases(workspace.goal, plan, runtime as RuntimeConnection)
+        updateWorkspace((current) => ({
+          ...current,
+          artifacts: { ...current.artifacts, phases: nextPhases, execution: null, verification: null },
+        }))
+        appendRun(createRun('phases', 'success', 'Fases geradas.', nextPhases.title))
+        appendMessages([
+          createMessage('agent', 'artifact', `Phases prontas: ${nextPhases.payload.sequencingLogic}`, { artifactType: 'phases', stage: 'phases' }),
+          createMessage('agent', 'status', `A execucao foi quebrada em ${nextPhases.payload.phases.length} etapa(s) com deliverables claros.`, { stage: 'phases' }),
+        ])
+        navigateTo('phases')
+      },
+      'Phases prontas',
+      'O agente organizou a entrega em uma sequencia operacional clara.',
+    )
   }
 
   async function runExecutionStage() {
     if (!plan) return
-    await withStage('execution', async () => {
-      const nextExecution = await generateExecution(workspace.goal, plan, phases, runtime as RuntimeConnection)
-      updateWorkspace((current) => ({ ...current, artifacts: { ...current.artifacts, execution: nextExecution, verification: null } }))
-      appendRun(createRun('execution', 'success', 'Pacote de execucao gerado.', nextExecution.title))
-      navigateTo('execution')
-    }, 'Pacote de execucao pronto', 'Os handoffs para Codex, Claude Code e Gemini foram montados sobre o plano atual.')
+    await withStage(
+      'execution',
+      async () => {
+        const nextExecution = await generateExecution(workspace.goal, plan, phases, runtime as RuntimeConnection)
+        updateWorkspace((current) => ({
+          ...current,
+          artifacts: { ...current.artifacts, execution: nextExecution, verification: null },
+        }))
+        appendRun(createRun('execution', 'success', 'Pacote de execucao gerado.', nextExecution.title))
+        appendMessages([
+          createMessage('agent', 'artifact', `Execution packet pronto: ${nextExecution.payload.executionSummary}`, { artifactType: 'execution', stage: 'execution' }),
+          createMessage('agent', 'status', 'Checklist, evidencias e handoff packets foram atualizados no chat e no inspector.', { stage: 'execution' }),
+        ])
+        navigateTo('execution')
+      },
+      'Execution pronta',
+      'O agente montou o pacote operacional para execucao real.',
+    )
   }
 
   async function runVerificationStage() {
     if (!plan || !execution) return
-    await withStage('verification', async () => {
-      const nextVerification = await generateVerification(workspace.goal, plan, execution, workspace.verificationInput, runtime as RuntimeConnection)
-      updateWorkspace((current) => ({ ...current, artifacts: { ...current.artifacts, verification: nextVerification } }))
-      appendRun(createRun('verification', 'success', 'Verificacao concluida.', nextVerification.title))
-      navigateTo('verification')
-    }, 'Verificacao atualizada', 'A auditoria comparou plano, pacote de execucao e evidencia de implementacao.')
+    await withStage(
+      'verification',
+      async () => {
+        const nextVerification = await generateVerification(
+          workspace.goal,
+          plan,
+          execution,
+          workspace.verificationInput,
+          runtime as RuntimeConnection,
+        )
+        updateWorkspace((current) => ({
+          ...current,
+          artifacts: { ...current.artifacts, verification: nextVerification },
+        }))
+        appendRun(createRun('verification', 'success', 'Verificacao concluida.', nextVerification.title))
+        appendMessages([
+          createMessage(
+            'agent',
+            'artifact',
+            `Verification ${nextVerification.payload.decision.toUpperCase()}: ${nextVerification.payload.summary}`,
+            { artifactType: 'verification', stage: 'verification' },
+          ),
+          createMessage('agent', 'status', `Proximo movimento sugerido: ${nextVerification.payload.nextMove}`, { stage: 'verification' }),
+        ])
+        navigateTo('verification')
+      },
+      'Verification pronta',
+      'A auditoria comparou o pacote de execucao com a evidencia informada.',
+    )
   }
 
   async function handleExport() {
     await exportWorkspaceBundle(workspace)
     appendRun(createRun('export', 'success', 'Workspace exportado.', workspace.name))
-    setBanner({ tone: 'success', title: 'Bundle exportado', body: 'O pacote do workspace foi baixado com artefatos, runs e contexto anexado.' })
+    appendMessage('agent', 'status', 'Bundle exportado com artefatos, historico e contexto anexado.', { stage: 'export' })
+    setBanner({ tone: 'success', title: 'Bundle exportado', body: 'O pacote do workspace foi baixado com sucesso.' })
+  }
+
+  function resetChatWorkspace() {
+    setWorkspace(createDemoWorkspace())
+    setComposer('')
+    setComposerMode('objective')
+    navigateTo('mission')
+    setBanner({ tone: 'neutral', title: 'Workspace resetado', body: 'O chat voltou para a seed demo, pronto para uma nova rodada.' })
+  }
+
+  async function handleCommand(input: string) {
+    const normalized = input.trim().toLowerCase()
+
+    if (!normalized) return
+
+    if (normalized === '/help' || normalized === 'help' || normalized === 'comandos') {
+      appendMessage(
+        'agent',
+        'status',
+        'Comandos disponiveis: /plan, /phases, /execute, /verify, /export e /reset. Use os chips do composer para atualizar objetivo, contexto, restricoes, criterios e evidencias.',
+      )
+      return
+    }
+
+    if (normalized === '/plan' || normalized === 'gerar plano' || normalized === 'planejar') {
+      await runPlanStage()
+      return
+    }
+
+    if (normalized === '/phases' || normalized === 'gerar fases' || normalized === 'fases') {
+      await runPhasesStage()
+      return
+    }
+
+    if (normalized === '/execute' || normalized === '/execution' || normalized === 'gerar execucao' || normalized === 'executar') {
+      await runExecutionStage()
+      return
+    }
+
+    if (normalized === '/verify' || normalized === 'verificar' || normalized === 'rodar verificacao') {
+      await runVerificationStage()
+      return
+    }
+
+    if (normalized === '/export' || normalized === 'exportar') {
+      await handleExport()
+      return
+    }
+
+    if (normalized === '/reset' || normalized === 'resetar') {
+      resetChatWorkspace()
+      appendMessage('agent', 'status', 'Workspace resetado. Traga um novo briefing e eu reabro o loop do zero.')
+      return
+    }
+
+    appendMessage('agent', 'status', 'Comando nao reconhecido. Use /help para ver o repertorio operacional do chat.')
+  }
+
+  async function handleComposerSubmit(event: FormEvent) {
+    event.preventDefault()
+    const value = composer.trim()
+    if (!value) return
+
+    appendMessage('user', 'text', value)
+    setComposer('')
+
+    const lowered = value.toLowerCase()
+    const prefixedMode =
+      lowered.startsWith('objetivo:') ? 'objective'
+        : lowered.startsWith('resultado:') ? 'outcome'
+          : lowered.startsWith('restricao:') ? 'constraint'
+            : lowered.startsWith('criterio:') ? 'criteria'
+              : lowered.startsWith('contexto:') ? 'context'
+                : lowered.startsWith('evidencia:') ? 'evidence'
+                  : lowered.startsWith('/') ? 'command'
+                    : composerMode
+
+    const normalizedValue = prefixedMode === composerMode || !value.includes(':') ? value : value.split(':').slice(1).join(':').trim()
+
+    if (prefixedMode === 'command') {
+      await handleCommand(value)
+      return
+    }
+
+    if (prefixedMode === 'objective') {
+      updateGoalField('objective', normalizedValue)
+      appendMessage('agent', 'status', `Objetivo central atualizado para: ${normalizedValue}`)
+      return
+    }
+
+    if (prefixedMode === 'outcome') {
+      updateGoalField('desiredOutcome', normalizedValue)
+      appendMessage('agent', 'status', `Resultado desejado atualizado para: ${normalizedValue}`)
+      return
+    }
+
+    if (prefixedMode === 'constraint') {
+      appendGoalListItem('constraints', normalizedValue)
+      appendMessage('agent', 'status', `Restricao registrada: ${normalizedValue}`)
+      return
+    }
+
+    if (prefixedMode === 'criteria') {
+      appendGoalListItem('acceptanceCriteria', normalizedValue)
+      appendMessage('agent', 'status', `Criterio de aceite registrado: ${normalizedValue}`)
+      return
+    }
+
+    if (prefixedMode === 'evidence') {
+      updateWorkspace((current) => ({
+        ...current,
+        verificationInput: [current.verificationInput, normalizedValue].filter(Boolean).join('\n\n'),
+      }))
+      appendMessage('agent', 'status', 'Evidencia adicionada ao bloco de verification.')
+      navigateTo('verification')
+      return
+    }
+
+    updateWorkspace((current) => ({
+      ...current,
+      goal: {
+        ...current.goal,
+        contextNotes: [current.goal.contextNotes, normalizedValue].filter(Boolean).join('\n\n'),
+      },
+    }))
+    appendMessage('agent', 'status', 'Contexto adicional absorvido pela memoria operacional do agente.')
   }
 
   const stageProgress = [
@@ -209,42 +483,223 @@ function App() {
     { label: 'Verify', done: Boolean(verification) },
   ]
 
+  const dockSummary = useMemo(() => {
+    if (activeView === 'plan' && plan) {
+      return {
+        title: plan.title,
+        body: plan.payload.executiveSummary,
+        bullets: [...plan.payload.contextSignals, ...plan.payload.approvalGates].slice(0, 6),
+      }
+    }
+
+    if (activeView === 'phases' && phases) {
+      return {
+        title: phases.title,
+        body: phases.payload.sequencingLogic,
+        bullets: phases.payload.phases.map((phase) => `${phase.id} · ${phase.title} · ${phase.deliverable}`),
+      }
+    }
+
+    if (activeView === 'execution' && execution) {
+      return {
+        title: execution.title,
+        body: execution.payload.executionSummary,
+        bullets: execution.payload.executionSteps.map((step) => `${step.label} · ${step.expectedEvidence}`).slice(0, 6),
+      }
+    }
+
+    if (activeView === 'verification' && verification) {
+      return {
+        title: verification.title,
+        body: verification.payload.summary,
+        bullets: [`Decision · ${verification.payload.decision.toUpperCase()}`, ...verification.payload.gaps.slice(0, 5)],
+      }
+    }
+
+    if (activeView === 'workspace') {
+      return {
+        title: workspace.name,
+        body: 'Bundle exportavel com artefatos, historico e contexto persistido localmente.',
+        bullets: [
+          `Runs · ${workspace.runs.length}`,
+          `Artefatos · ${[plan, phases, execution, verification].filter(Boolean).length}`,
+          `Modo · ${workspace.mode}`,
+        ],
+      }
+    }
+
+    return {
+      title: workspace.goal.objective,
+      body: workspace.goal.desiredOutcome,
+      bullets: [...workspace.goal.constraints, ...workspace.goal.acceptanceCriteria].slice(0, 6),
+    }
+  }, [activeView, execution, phases, plan, verification, workspace])
+
+  function renderArtifactInline(message: ChatMessage) {
+    if (message.artifactType === 'plan' && plan) {
+      return (
+        <div className="chat-artifact-card">
+          <span className="chat-artifact-tag">Plan</span>
+          <strong>{plan.title}</strong>
+          <p>{plan.payload.executiveSummary}</p>
+          <ul>
+            {plan.payload.workstreams.slice(0, 3).map((stream) => <li key={stream.name}>{stream.name}</li>)}
+          </ul>
+        </div>
+      )
+    }
+
+    if (message.artifactType === 'phases' && phases) {
+      return (
+        <div className="chat-artifact-card">
+          <span className="chat-artifact-tag">Phases</span>
+          <strong>{phases.title}</strong>
+          <p>{phases.payload.sequencingLogic}</p>
+          <ul>
+            {phases.payload.phases.slice(0, 3).map((phase) => <li key={phase.id}>{phase.id} · {phase.title}</li>)}
+          </ul>
+        </div>
+      )
+    }
+
+    if (message.artifactType === 'execution' && execution) {
+      return (
+        <div className="chat-artifact-card">
+          <span className="chat-artifact-tag">Execution</span>
+          <strong>{execution.title}</strong>
+          <p>{execution.payload.executionSummary}</p>
+          <ul>
+            {execution.payload.operatorChecklist.slice(0, 4).map((item) => <li key={item}>{item}</li>)}
+          </ul>
+        </div>
+      )
+    }
+
+    if (message.artifactType === 'verification' && verification) {
+      return (
+        <div className="chat-artifact-card">
+          <span className="chat-artifact-tag">Verification</span>
+          <strong>{verification.payload.decision.toUpperCase()}</strong>
+          <p>{verification.payload.summary}</p>
+          <ul>
+            {verification.payload.findings.slice(0, 3).map((item) => <li key={item.title}>{item.severity} · {item.title}</li>)}
+          </ul>
+        </div>
+      )
+    }
+
+    return null
+  }
+
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
-        <div className="brand-block"><div className="brand-mark"><Sparkles size={18} /></div><div><p className="eyebrow">AI Tracer</p><h1>Mission control spec-driven</h1></div></div>
-        <p className="sidebar-copy">Transforme objetivo, contexto e criterio de aceite em trilhas operacionais, handoffs e verificacoes auditaveis.</p>
-        <nav className="nav-list">{viewItems.map((item) => { const Icon = item.icon; return <button key={item.id} className={`nav-item ${activeView === item.id ? 'is-active' : ''}`} onClick={() => navigateTo(item.id)} type="button"><div className="nav-item-icon"><Icon size={16} /></div><div><span>{item.label}</span><small>{item.kicker}</small></div><ChevronRight size={14} /></button> })}</nav>
-        <section className="rail-card"><div className="rail-card-header"><span className="eyebrow">Pipeline</span><ShieldCheck size={16} /></div><StageProgress progress={stageProgress} /></section>
-        <section className="rail-card"><div className="rail-card-header"><span className="eyebrow">Runtime</span><KeyRound size={16} /></div><div className="runtime-stack"><div className="metric-chip"><span>Provider</span><strong>OpenRouter</strong></div><div className="metric-chip"><span>Modelo</span><strong>{preferences.model}</strong></div><div className={`metric-chip ${runtime ? 'is-online' : ''}`}><span>Status</span><strong>{runtime ? 'Conectado' : 'Sessao local'}</strong></div></div></section>
+    <div className="chat-app-shell">
+      <aside className="chat-rail">
+        <div className="brand-block">
+          <div className="brand-mark"><Sparkles size={18} /></div>
+          <div>
+            <p className="eyebrow">AI Tracer</p>
+            <h1>Agent chat control plane</h1>
+          </div>
+        </div>
+        <p className="sidebar-copy">A conversa virou a tela principal. O agente absorve contexto, atualiza a memoria operacional e dispara artefatos sem sair do chat.</p>
+        <section className="rail-card">
+          <div className="rail-card-header"><span className="eyebrow">Pipeline</span><ShieldCheck size={16} /></div>
+          <div className="progress-grid">
+            {stageProgress.map((item) => <div key={item.label} className={`progress-pill ${item.done ? 'is-done' : ''}`}><span>{item.label}</span></div>)}
+          </div>
+        </section>
+        <section className="rail-card">
+          <div className="rail-card-header"><span className="eyebrow">Runtime</span><KeyRound size={16} /></div>
+          <div className="runtime-stack">
+            <div className="metric-chip"><span>Modelo</span><strong>{preferences.model}</strong></div>
+            <div className={`metric-chip ${runtime ? 'is-online' : ''}`}><span>Status</span><strong>{runtime ? 'Conectado' : 'Sessao local'}</strong></div>
+            <div className="metric-chip"><span>Runs</span><strong>{workspace.runs.length}</strong></div>
+          </div>
+        </section>
+        <section className="rail-card">
+          <div className="rail-card-header"><span className="eyebrow">Comandos</span><Command size={16} /></div>
+          <div className="command-list"><span>/plan</span><span>/phases</span><span>/execute</span><span>/verify</span><span>/export</span><span>/reset</span></div>
+        </section>
       </aside>
 
-      <main className="main-panel">
-        <section className="hero-shell">
-          <div className="hero-copy"><span className="hero-tag">Zero prompt drift. Mais controle. Mais rastreabilidade.</span><h2>Planeje, empacote execucao e verifique com uma IA que pensa em etapas e deixa rastro.</h2><p>O AI Tracer roda como control plane static-first. A chave do provedor fica apenas na sessao do navegador, enquanto planos, fases, pacotes e verificacoes permanecem locais e exportaveis.</p></div>
-          <div className="hero-grid"><MetricCard label="Workspace" value={workspace.name} /><MetricCard label="Runs" value={String(workspace.runs.length)} /><MetricCard label="Artefatos" value={String([plan, phases, execution, verification].filter(Boolean).length)} /><MetricCard label="Ultima validacao" value={preferences.lastValidatedAt ? formatDate(preferences.lastValidatedAt) : 'Nao validado'} /></div>
+      <main className="chat-main-panel">
+        <section className={`banner banner-${banner.tone}`}>
+          <div className="banner-dot" />
+          <div><strong>{banner.title}</strong><p>{banner.body}</p></div>
         </section>
-        <Banner banner={banner} />
-        <div className="content-grid">
-          <section className="panel panel-large">
-            <div className="panel-header"><div><span className="eyebrow">Current view</span><h3>{viewItems.find((item) => item.id === activeView)?.label}</h3></div><div className="panel-actions"><button className="ghost-button" onClick={() => void handleExport()} type="button"><Download size={16} />Exportar bundle</button><button className="ghost-button" onClick={() => setWorkspace(createDemoWorkspace())} type="button"><RefreshCcw size={16} />Resetar demo</button></div></div>
-            <AnimatePresence mode="wait"><motion.div key={activeView} initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -18 }} transition={{ duration: 0.2, ease: 'easeOut' }}>
-              {activeView === 'mission' && <MissionView workspace={workspace} runtime={runtime} onGo={navigateTo} />}
-              {activeView === 'goal' && <GoalView workspace={workspace} connectionDraft={connectionDraft} runtime={runtime} isBusy={isBusy === 'connect'} onConnect={handleConnect} onDisconnect={handleDisconnect} onConnectionChange={setConnectionDraft} onGoalFieldChange={updateGoalField} onGoalListChange={updateGoalList} onAttachmentImport={handleAttachmentImport} onAttachmentRemove={removeAttachment} />}
-              {activeView === 'plan' && <PlanView plan={plan} isBusy={isBusy === 'plan'} onGenerate={runPlanStage} />}
-              {activeView === 'phases' && <PhasesView plan={plan} phases={phases} isBusy={isBusy === 'phases'} onGenerate={runPhasesStage} />}
-              {activeView === 'execution' && <ExecutionView execution={execution} isBusy={isBusy === 'execution'} onGenerate={runExecutionStage} />}
-              {activeView === 'verification' && <VerificationView verification={verification} execution={execution} value={workspace.verificationInput} isBusy={isBusy === 'verification'} onChange={(value) => updateWorkspace((current) => ({ ...current, verificationInput: value }))} onGenerate={runVerificationStage} />}
-              {activeView === 'workspace' && <WorkspaceView workspace={workspace} />}
-            </motion.div></AnimatePresence>
+
+        <section className="chat-panel">
+          <div className="chat-topbar">
+            <div><span className="hero-tag">Chat-first agent</span><h2>Converse, construa e audite no mesmo fluxo.</h2></div>
+            <div className="panel-actions">
+              <button className="ghost-button" onClick={() => void handleExport()} type="button"><Download size={16} />Exportar</button>
+              <button className="ghost-button" onClick={resetChatWorkspace} type="button"><RefreshCcw size={16} />Resetar</button>
+            </div>
+          </div>
+
+          <section className="runtime-bar">
+            <form className="runtime-form" onSubmit={handleConnect}>
+              <label className="field-block">
+                Chave OpenRouter
+                <div className="secure-input-shell">
+                  <input aria-label="Chave OpenRouter" autoComplete="off" className="text-input" onChange={(event) => setConnectionDraft((current) => ({ ...current, apiKey: event.target.value }))} placeholder="sk-or-v1-..." type={showKey ? 'text' : 'password'} value={connectionDraft.apiKey} />
+                  <button className="ghost-button" onClick={() => setShowKey((current) => !current)} type="button">{showKey ? <EyeOff size={16} /> : <Eye size={16} />}{showKey ? 'Ocultar' : 'Mostrar'}</button>
+                </div>
+              </label>
+              <label className="field-block">
+                Modelo default
+                <input aria-label="Modelo default" className="text-input" onChange={(event) => setConnectionDraft((current) => ({ ...current, model: event.target.value }))} placeholder={DEFAULT_MODEL} type="text" value={connectionDraft.model} />
+              </label>
+              <div className="runtime-form-actions">
+                <button className="primary-button" disabled={isBusy === 'connect'} type="submit">{isBusy === 'connect' ? 'Validando runtime...' : runtime ? 'Revalidar runtime' : 'Conectar runtime'}</button>
+                {runtime && <button className="ghost-button" onClick={handleDisconnect} type="button">Remover chave</button>}
+              </div>
+            </form>
+            <div className="runtime-note"><ShieldCheck size={16} /><p>A chave fica apenas na sessao do navegador. Nada e salvo no deploy publicado.</p></div>
           </section>
 
-          <aside className="panel panel-side">
-            <div className="panel-header"><div><span className="eyebrow">Execution feed</span><h3>Ultimas corridas</h3></div></div>
-            <div className="feed-list">{workspace.runs.map((run) => <article key={run.id} className={`feed-item ${run.status === 'success' ? 'is-success' : 'is-error'}`}><div className="feed-topline"><span>{run.stage}</span><small>{formatDate(run.finishedAt)}</small></div><strong>{run.summary}</strong><p>{run.detail}</p></article>)}</div>
-          </aside>
-        </div>
+          <div className="chat-thread" ref={threadRef}>
+            <AnimatePresence initial={false}>
+              {workspace.conversation.map((message) => (
+                <motion.article key={message.id} className={`chat-bubble chat-${message.role} chat-${message.kind}`} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }} transition={{ duration: 0.2, ease: 'easeOut' }}>
+                  <div className="chat-bubble-head"><span>{message.role === 'agent' ? 'AI Tracer' : message.role === 'user' ? 'Voce' : 'Sistema'}</span><small>{formatDate(message.createdAt)}</small></div>
+                  <p>{message.text}</p>
+                  {renderArtifactInline(message)}
+                </motion.article>
+              ))}
+            </AnimatePresence>
+            {isBusy && <motion.article className="chat-bubble chat-agent chat-status" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}><div className="chat-bubble-head"><span>AI Tracer</span><small>agora</small></div><p>Processando {isBusy}...</p></motion.article>}
+          </div>
+
+          <section className="chat-tools">
+            <div className="quick-action-row">
+              <button className="ghost-button" onClick={() => void runPlanStage()} type="button"><Radar size={16} />Gerar plan</button>
+              <button className="ghost-button" onClick={() => void runPhasesStage()} type="button"><Layers3 size={16} />Gerar phases</button>
+              <button className="ghost-button" onClick={() => void runExecutionStage()} type="button"><PlayCircle size={16} />Gerar execution</button>
+              <button className="ghost-button" onClick={() => void runVerificationStage()} type="button"><FileSearch size={16} />Rodar verification</button>
+            </div>
+            <div className="composer-mode-row">
+              {composerModes.map((mode) => <button key={mode.id} className={`mode-chip ${composerMode === mode.id ? 'is-active' : ''}`} onClick={() => setComposerMode(mode.id)} type="button">{mode.label}</button>)}
+            </div>
+            <div className="composer-hint"><Bot size={16} /><p>{composerModes.find((item) => item.id === composerMode)?.hint}</p></div>
+            <form className="chat-composer" onSubmit={(event) => void handleComposerSubmit(event)}>
+              <textarea aria-label="Mensagem do agente" className="text-area composer-input" onChange={(event) => setComposer(event.target.value)} placeholder="Escreva aqui. Ex.: Objetivo: criar um chat operacional. Ou use /plan para gerar o primeiro artefato." rows={4} value={composer} />
+              <div className="composer-actions">
+                <label className="upload-button"><Paperclip size={16} />Importar contexto<input className="hidden-input" multiple onChange={(event) => void handleAttachmentImport(event.target.files)} type="file" /></label>
+                <button className="primary-button" disabled={!composer.trim()} type="submit"><SendHorizontal size={16} />Enviar ao agente</button>
+              </div>
+            </form>
+          </section>
+        </section>
       </main>
+
+      <aside className="dock-panel">
+        <div className="panel-header"><div><span className="eyebrow">Inspector</span><h3>{dockSummary.title}</h3></div><FolderKanban size={16} /></div>
+        <div className="dock-tabs">{dockViews.map((item) => <button key={item.id} className={`dock-tab ${activeView === item.id ? 'is-active' : ''}`} onClick={() => navigateTo(item.id)} type="button">{item.label}</button>)}</div>
+        <section className="dock-card"><p>{dockSummary.body}</p></section>
+        <section className="dock-card"><span className="eyebrow">Sinais ativos</span><ul className="dock-list">{dockSummary.bullets.map((item) => <li key={item}>{truncate(item, 180)}</li>)}</ul></section>
+        <section className="dock-card"><span className="eyebrow">Memoria operacional</span><div className="memory-stack"><div><strong>Objetivo</strong><p>{workspace.goal.objective}</p></div><div><strong>Resultado</strong><p>{workspace.goal.desiredOutcome}</p></div><div><strong>Verification input</strong><p>{workspace.verificationInput || 'Nenhuma evidencia registrada ainda.'}</p></div></div></section>
+      </aside>
     </div>
   )
 }

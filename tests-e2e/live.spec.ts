@@ -14,43 +14,44 @@ test.describe('live flow', () => {
       sessionStorage.clear()
     })
 
-    await page.goto('/#goal')
+    await page.goto('/')
 
     await page.getByLabel('Chave OpenRouter').fill(apiKey ?? '')
     await page.getByLabel('Modelo default').fill(model)
     await page.getByRole('button', { name: /conectar runtime|revalidar runtime/i }).click()
-    await expect(page.getByText(/Runtime conectado/i)).toBeVisible({ timeout: 45_000 })
+    await expect(page.getByText('Runtime conectado', { exact: true })).toBeVisible({ timeout: 45_000 })
 
-    await page.getByLabel('Objetivo central').fill('Planejar um produto AI Tracer robusto, seguro, leve e pronto para GitHub Pages.')
-    await page.getByLabel('Resultado desejado').fill('Gerar um plano spec-driven utilizavel e auditavel.')
-    await page.getByLabel('Restricoes').fill('Sem segredos no bundle\nUI dark mode premium\nPersistencia local')
-    await page.getByLabel('Criterios de aceite').fill('Plano coerente\nFases rastreaveis\nVerificacao auditavel')
+    await page.getByLabel('Mensagem do agente').fill('Objetivo: Planejar um produto AI Tracer robusto, seguro, leve e pronto para GitHub Pages.')
+    await page.getByRole('button', { name: /Enviar ao agente/i }).click()
+    await page.getByLabel('Mensagem do agente').fill('Resultado: Gerar um plano spec-driven utilizavel e auditavel.')
+    await page.getByRole('button', { name: /Enviar ao agente/i }).click()
+    await page.getByLabel('Mensagem do agente').fill('Restricao: Sem segredos no bundle')
+    await page.getByRole('button', { name: /Enviar ao agente/i }).click()
+    await page.getByLabel('Mensagem do agente').fill('Restricao: UI dark mode premium')
+    await page.getByRole('button', { name: /Enviar ao agente/i }).click()
+    await page.getByLabel('Mensagem do agente').fill('Criterio: Plano coerente')
+    await page.getByRole('button', { name: /Enviar ao agente/i }).click()
+    await page.getByLabel('Mensagem do agente').fill('Criterio: Fases rastreaveis')
+    await page.getByRole('button', { name: /Enviar ao agente/i }).click()
 
-    await page.locator('button.nav-item').filter({ hasText: 'Plan' }).click()
-    await page.getByRole('button', { name: /gerar plano/i }).click()
+    await page.getByRole('button', { name: /Gerar plan/i }).click()
 
-    await expect(page.getByText(/Artifact ready/i)).toBeVisible({ timeout: 180_000 })
-    await expect(page.getByText(/Plano gerado\./i)).toBeVisible()
+    await expect(page.getByText(/Plano pronto:/i)).toBeVisible({ timeout: 180_000 })
 
-    await page.locator('button.nav-item').filter({ hasText: 'Phases' }).click()
-    await page.getByRole('button', { name: /gerar fases/i }).click()
+    await page.getByRole('button', { name: /Gerar phases/i }).click()
 
-    await expect(page.getByText(/Sequencing logic/i)).toBeVisible({ timeout: 180_000 })
-    await expect(page.getByText(/Fases geradas\./i)).toBeVisible()
+    await expect(page.getByText(/Phases prontas:/i)).toBeVisible({ timeout: 180_000 })
 
-    await page.locator('button.nav-item').filter({ hasText: 'Execute' }).click()
-    await page.getByRole('button', { name: /gerar execucao/i }).click()
+    await page.getByRole('button', { name: /Gerar execution/i }).click()
 
-    await expect(page.getByText(/Execution summary/i)).toBeVisible({ timeout: 180_000 })
-    await expect(page.getByText(/Pacote de execucao gerado\./i)).toBeVisible()
+    await expect(page.getByText(/Execution packet pronto:/i)).toBeVisible({ timeout: 180_000 })
 
-    await page.locator('button.nav-item').filter({ hasText: 'Verify' }).click()
-    await page.getByLabel('Evidencia de implementacao').fill(
-      'Implementacao simulada: fluxo plan -> phases -> execution persistido localmente, runtime validado via OpenRouter, exportacao disponivel e verificacao auditavel pronta para uso.',
+    await page.getByLabel('Mensagem do agente').fill(
+      'Evidencia: Implementacao simulada com fluxo plan -> phases -> execution persistido localmente, runtime validado via OpenRouter, exportacao disponivel e verificacao auditavel pronta para uso.',
     )
-    await page.getByRole('button', { name: /rodar verificacao/i }).click()
+    await page.getByRole('button', { name: /Enviar ao agente/i }).click()
+    await page.getByRole('button', { name: /Rodar verification/i }).click()
 
-    await expect(page.getByText(/Decision/i)).toBeVisible({ timeout: 180_000 })
-    await expect(page.getByText(/Verificacao concluida\./i)).toBeVisible()
+    await expect(page.getByText(/Verification /i)).toBeVisible({ timeout: 180_000 })
   })
 })

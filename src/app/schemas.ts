@@ -14,6 +14,16 @@ export const attachmentSchema = z.object({
   size: z.number().int().nonnegative(),
 })
 
+export const chatMessageSchema = z.object({
+  id: boundedText(4, 80),
+  role: z.enum(['agent', 'user', 'system']),
+  kind: z.enum(['text', 'artifact', 'status']),
+  text: z.string().max(8_000),
+  createdAt: boundedText(10, 40),
+  artifactType: artifactTypeSchema.optional(),
+  stage: runStageSchema.optional(),
+})
+
 export const goalInputSchema = z.object({
   objective: boundedText(10, 4_000),
   desiredOutcome: boundedText(10, 2_000),
@@ -161,6 +171,7 @@ export const workspaceSchema = z.object({
   mode: z.enum(['demo', 'live']),
   createdAt: boundedText(10, 40),
   updatedAt: boundedText(10, 40),
+  conversation: z.array(chatMessageSchema).max(200).default([]),
   goal: goalInputSchema,
   verificationInput: z.string().max(8_000).default(''),
   artifacts: z.object({
@@ -173,6 +184,7 @@ export const workspaceSchema = z.object({
 })
 
 export type AttachmentRecord = z.infer<typeof attachmentSchema>
+export type ChatMessage = z.infer<typeof chatMessageSchema>
 export type GoalInput = z.infer<typeof goalInputSchema>
 export type PlanPayload = z.infer<typeof planPayloadSchema>
 export type PhasePayload = z.infer<typeof phasePayloadSchema>

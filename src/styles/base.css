@@ -27,8 +27,9 @@
 html {
   min-height: 100%;
   background:
-    radial-gradient(circle at top left, rgba(109, 211, 255, 0.14), transparent 28%),
+    radial-gradient(circle at top left, rgba(109, 211, 255, 0.16), transparent 28%),
     radial-gradient(circle at top right, rgba(120, 241, 198, 0.12), transparent 24%),
+    radial-gradient(circle at bottom right, rgba(255, 148, 91, 0.08), transparent 24%),
     linear-gradient(180deg, #04060f 0%, #060b1b 48%, #050816 100%);
 }
 
@@ -36,7 +37,11 @@ body {
   margin: 0;
   min-height: 100vh;
   color: var(--text);
-  background: transparent;
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+    transparent;
+  background-size: 28px 28px, 28px 28px, auto;
 }
 
 button,

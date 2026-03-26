@@ -9,6 +9,22 @@ export function createDemoWorkspace(): TracerWorkspace {
     mode: 'demo',
     createdAt: timestamp,
     updatedAt: timestamp,
+    conversation: [
+      {
+        id: 'msg-demo-01',
+        role: 'agent',
+        kind: 'text',
+        createdAt: timestamp,
+        text: 'Sou o AI Tracer. Traga objetivo, resultado desejado, restricoes e criterios de aceite aqui no chat para eu estruturar o plano.',
+      },
+      {
+        id: 'msg-demo-02',
+        role: 'agent',
+        kind: 'status',
+        createdAt: timestamp,
+        text: 'Dica: use o chat para atualizar contexto e os comandos rapidos para gerar plan, phases, execution e verification.',
+      },
+    ],
     goal: {
       objective: 'Construir uma plataforma spec-driven que transforme objetivos soltos em planos, fases, handoffs para agentes e verificacoes auditaveis.',
       desiredOutcome: 'Um produto leve, seguro e pronto para orientar execucao com IA sem depender de prompts soltos.',
