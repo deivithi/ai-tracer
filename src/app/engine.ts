@@ -16,7 +16,7 @@ import {
 import { buildExecutionPrompts, buildPhasePrompts, buildPlanPrompts, buildVerificationPrompts } from './prompts'
 import { runStructuredPrompt } from './openrouter'
 import type { RuntimeConnection } from './types'
-import { createId, joinBullets, nowIso } from './utils'
+import { createId, joinBullets, nowIso, sanitizeModelText } from './utils'
 
 function truncate(value: string, max: number): string {
   return value.trim().replace(/\s+/g, ' ').slice(0, max)
@@ -27,7 +27,7 @@ function normalizeTextCandidate(value: unknown, max: number): string | null {
     return null
   }
 
-  const normalized = truncate(value, max)
+  const normalized = truncate(sanitizeModelText(value), max)
   return normalized.length > 0 ? normalized : null
 }
 

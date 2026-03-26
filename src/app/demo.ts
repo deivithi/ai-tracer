@@ -35,6 +35,12 @@ export function createDemoWorkspace(): TracerWorkspace {
       attachments: [],
     },
     verificationInput: 'Implementacao inicial com UI escura, cofre local da chave e pipeline goal -> plan -> execute -> verify.',
+    memory: {
+      summary: 'O workspace demo preserva objetivo, resultado, restricoes e criterios como memoria operacional inicial.',
+      totalEntries: 4,
+      retrieved: ['Objetivo inicial do produto', 'Restricoes de seguranca', 'Criticos de aceitacao'],
+      recent: ['Objetivo inicial do produto', 'Resultado desejado do demo', 'Restricoes de seguranca'],
+    },
     artifacts: {
       plan: null,
       phases: null,

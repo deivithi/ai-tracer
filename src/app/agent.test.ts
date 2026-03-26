@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createDemoWorkspace } from './demo'
-import { executeAgentTurn, runAgentTurn } from './agent'
+import { executeAgentTurn, processAgentTurn, runAgentTurn } from './agent'
 import type { AgentTurnPayload } from './schemas'
 import type { RuntimeConnection } from './types'
 
@@ -13,6 +13,8 @@ const runtime: RuntimeConnection = {
 describe('agent turn engine', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
+    localStorage.clear()
+    sessionStorage.clear()
   })
 
   it('interpreta linguagem natural e sugere plan quando o pedido e aberto e arquitetural', async () => {
@@ -100,5 +102,25 @@ describe('agent turn engine', () => {
     expect(resolution.workspace.conversation.at(-2)?.kind).toBe('text')
     expect(resolution.workspace.conversation.at(-1)?.artifactType).toBe('plan')
     expect(resolution.finalView).toBe('plan')
+  })
+
+  it('persiste memoria longa local entre turnos em modo demo', async () => {
+    const workspace = createDemoWorkspace()
+
+    const firstTurn = await processAgentTurn(
+      workspace,
+      'Quero que voce lembre que a prioridade do produto e parecer um agente real, sem respostas roteirizadas.',
+      null,
+    )
+
+    const secondTurn = await processAgentTurn(
+      firstTurn.workspace,
+      'Qual e a prioridade principal que eu defini para este produto?',
+      null,
+    )
+
+    expect(firstTurn.workspace.memory.totalEntries).toBeGreaterThan(0)
+    expect(secondTurn.workspace.memory.totalEntries).toBeGreaterThanOrEqual(firstTurn.workspace.memory.totalEntries)
+    expect(secondTurn.workspace.memory.retrieved.length).toBeGreaterThan(0)
   })
 })

@@ -184,6 +184,13 @@ export const runRecordSchema = z.object({
   detail: z.string().max(4_000).default(''),
 })
 
+export const workspaceMemorySchema = z.object({
+  summary: z.string().max(4_000).default(''),
+  totalEntries: z.number().int().nonnegative().default(0),
+  retrieved: z.array(boundedText(1, 320)).max(8).default([]),
+  recent: z.array(boundedText(1, 320)).max(8).default([]),
+})
+
 export const workspaceSchema = z.object({
   id: boundedText(4, 80),
   name: boundedText(3, 140),
@@ -193,6 +200,12 @@ export const workspaceSchema = z.object({
   conversation: z.array(chatMessageSchema).max(200).default([]),
   goal: goalInputSchema,
   verificationInput: z.string().max(8_000).default(''),
+  memory: workspaceMemorySchema.default({
+    summary: '',
+    totalEntries: 0,
+    retrieved: [],
+    recent: [],
+  }),
   artifacts: z.object({
     plan: planArtifactSchema.nullable(),
     phases: phaseArtifactSchema.nullable(),
@@ -216,4 +229,5 @@ export type PhaseArtifact = z.infer<typeof phaseArtifactSchema>
 export type ExecutionArtifact = z.infer<typeof executionArtifactSchema>
 export type VerificationArtifact = z.infer<typeof verificationArtifactSchema>
 export type RunRecord = z.infer<typeof runRecordSchema>
+export type WorkspaceMemoryState = z.infer<typeof workspaceMemorySchema>
 export type TracerWorkspace = z.infer<typeof workspaceSchema>

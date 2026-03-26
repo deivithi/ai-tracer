@@ -79,6 +79,30 @@ export function joinBullets(items: string[]): string {
   return items.map((item) => `- ${item}`).join('\n')
 }
 
+export function sanitizeModelText(value: string): string {
+  return value
+    .replace(/\r\n/g, '\n')
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'")
+    .replace(/[–—]/g, '-')
+    .replace(/…/g, '...')
+    .replace(/[•·]/g, '-')
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .split('')
+    .map((character) => {
+      const code = character.charCodeAt(0)
+      if (character === '\n' || character === '\r' || character === '\t') {
+        return character
+      }
+      return code >= 32 && code <= 126 ? character : ' '
+    })
+    .join('')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
 export function formatDate(value: string): string {
   return new Intl.DateTimeFormat('pt-BR', {
     dateStyle: 'short',

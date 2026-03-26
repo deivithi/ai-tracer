@@ -1,5 +1,6 @@
 import { generateExecution, generatePhases, generatePlan, generateVerification } from './engine'
-import { runStructuredPrompt } from './openrouter'
+import { hydrateMemories, rememberTurn, type MemoryRecord } from './memory'
+import { runStructuredPrompt, runTextPrompt } from './openrouter'
 import {
   agentTurnPayloadSchema,
   type AgentAction,
@@ -10,7 +11,7 @@ import {
   type TracerWorkspace,
 } from './schemas'
 import type { RuntimeConnection, ViewId } from './types'
-import { createId, nowIso } from './utils'
+import { createId, nowIso, sanitizeModelText } from './utils'
 
 const runtimeRequiredActions: AgentAction[] = ['plan', 'phases', 'execution', 'verification']
 
@@ -32,8 +33,15 @@ function truncate(value: string, max: number): string {
   return value.trim().replace(/\s+/g, ' ').slice(0, max)
 }
 
-function uniquePush(base: string[], items: string[], max: number): string[] {
-  return Array.from(new Set([...base, ...items.map((item) => truncate(item, 280)).filter(Boolean)])).slice(0, max)
+function normalizeForSearch(value: string): string {
+  return value
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+}
+
+function uniquePush(base: string[], items: string[], max: number, itemMax = 280): string[] {
+  return Array.from(new Set([...base, ...items.map((item) => truncate(item, itemMax)).filter(Boolean)])).slice(0, max)
 }
 
 function createRun(stage: RunRecord['stage'], status: RunRecord['status'], summary: string, detail: string): RunRecord {
@@ -60,8 +68,18 @@ function createMessage(
 
 function serializeConversation(workspace: TracerWorkspace): string {
   return workspace.conversation
-    .slice(-8)
+    .slice(-10)
     .map((message) => `${message.role.toUpperCase()} (${message.kind}): ${truncate(message.text, 320)}`)
+    .join('\n')
+}
+
+function serializeMemories(memories: MemoryRecord[]): string {
+  if (memories.length === 0) {
+    return 'Nenhuma memoria recuperada.'
+  }
+
+  return memories
+    .map((memory, index) => `${index + 1}. [${memory.kind}] ${truncate(memory.text, 320)}`)
     .join('\n')
 }
 
@@ -81,6 +99,7 @@ function workspaceDigest(workspace: TracerWorkspace): string {
         })),
       },
       verificationInput: truncate(workspace.verificationInput, 1_400),
+      memory: workspace.memory,
       artifacts: {
         plan: workspace.artifacts.plan ? { title: workspace.artifacts.plan.title, summary: workspace.artifacts.plan.payload.executiveSummary } : null,
         phases: workspace.artifacts.phases ? { title: workspace.artifacts.phases.title, summary: workspace.artifacts.phases.payload.sequencingLogic } : null,
@@ -91,6 +110,14 @@ function workspaceDigest(workspace: TracerWorkspace): string {
     null,
     2,
   )
+}
+
+function isGreeting(value: string): boolean {
+  return /^(oi|ola|e ai|opa|hey|hello)\??$/i.test(normalizeForSearch(value).trim())
+}
+
+function asksCapabilities(value: string): boolean {
+  return /(o que voce consegue|o que conseguimos fazer|como voce funciona|quais capacidades|o que da para fazer aqui)/i.test(normalizeForSearch(value))
 }
 
 function heuristicActions(workspace: TracerWorkspace, lower: string): AgentAction[] {
@@ -116,17 +143,19 @@ function heuristicActions(workspace: TracerWorkspace, lower: string): AgentActio
     actions.push('verification')
   }
 
-  if (actions.length === 0 && (lower.includes('agente') || lower.includes('melhore') || lower.includes('refa') || lower.includes('entenda') || lower.includes('estruture'))) {
-    if (!workspace.artifacts.plan) {
-      actions.push('plan')
-    }
+  if (
+    actions.length === 0
+    && (lower.includes('agente') || lower.includes('melhore') || lower.includes('refa') || lower.includes('entenda') || lower.includes('estruture'))
+    && !workspace.artifacts.plan
+  ) {
+    actions.push('plan')
   }
 
   return Array.from(new Set(actions)).slice(0, 4)
 }
 
 function heuristicObjective(workspace: TracerWorkspace, message: string, lower: string): string {
-  if (lower.startsWith('/')) {
+  if (lower.startsWith('/') || isGreeting(message) || asksCapabilities(message)) {
     return ''
   }
 
@@ -134,7 +163,7 @@ function heuristicObjective(workspace: TracerWorkspace, message: string, lower: 
     return truncate(message, 1_200)
   }
 
-  if (!workspace.artifacts.plan && message.length > 60) {
+  if (!workspace.artifacts.plan && message.length > 80) {
     return truncate(message, 1_200)
   }
 
@@ -150,44 +179,84 @@ function heuristicOutcome(message: string, lower: string): string {
 }
 
 function heuristicUpdates(workspace: TracerWorkspace, message: string): AgentTurnPayload['updates'] {
-  const lower = message.toLowerCase()
-  const constraintsToAdd = /(sem\s+[^,.!\n]+|nao\s+[^,.!\n]+|não\s+[^,.!\n]+)/gi
+  const lower = normalizeForSearch(message)
+  const constraintsToAdd = /(sem\s+[^,.!\n]+|nao\s+[^,.!\n]+)/gi
   const criteriaToAdd = /(deve\s+[^,.!\n]+|precisa\s+[^,.!\n]+|criterio\s*:\s*[^,.!\n]+)/gi
+
+  if (isGreeting(message) || asksCapabilities(message)) {
+    return {
+      objective: '',
+      desiredOutcome: '',
+      constraintsToAdd: [],
+      acceptanceCriteriaToAdd: [],
+      contextToAdd: [],
+      evidenceToAdd: [],
+    }
+  }
 
   return {
     objective: heuristicObjective(workspace, message, lower),
     desiredOutcome: heuristicOutcome(message, lower),
     constraintsToAdd: Array.from(lower.matchAll(constraintsToAdd)).map((match) => truncate(match[0], 280)).slice(0, 3),
     acceptanceCriteriaToAdd: Array.from(lower.matchAll(criteriaToAdd)).map((match) => truncate(match[0], 280)).slice(0, 3),
-    contextToAdd: lower.startsWith('/') ? [] : [truncate(message, 500)].slice(0, 1),
-    evidenceToAdd: lower.includes('evid') || lower.includes('prova') || lower.includes('resultado implementado')
-      ? [truncate(message, 500)]
-      : [],
+    contextToAdd: [truncate(message, 500)].slice(0, 1),
+    evidenceToAdd:
+      lower.includes('evid')
+      || lower.includes('prova')
+      || lower.includes('resultado implementado')
+      || lower.includes('implementacao concluida')
+        ? [truncate(message, 500)]
+        : [],
   }
 }
 
-function buildHeuristicTurn(workspace: TracerWorkspace, userMessage: string): AgentTurnPayload {
+function buildHeuristicTurn(workspace: TracerWorkspace, userMessage: string, memories: MemoryRecord[]): AgentTurnPayload {
   const lower = userMessage.trim().toLowerCase()
   const actions = heuristicActions(workspace, lower)
   const updates = heuristicUpdates(workspace, userMessage)
   const runtimeNeeded = actions.some((action) => runtimeRequiredActions.includes(action))
 
+  if (isGreeting(userMessage)) {
+    return {
+      reply: 'Posso conversar com voce de forma livre, recuperar memoria longa local, organizar objetivo, restricoes e criterios, e acionar plan, phases, execution e verification quando fizer sentido. Me diga o que voce quer construir ou resolver e eu puxo o contexto certo antes de agir.',
+      understanding: 'Saudacao inicial do usuario.',
+      updates,
+      actions: [],
+      focusView: 'mission',
+      needsClarification: false,
+      clarificationQuestion: '',
+    }
+  }
+
+  if (asksCapabilities(userMessage)) {
+    return {
+      reply: `Hoje eu consigo atuar como agente de plataforma: entendo linguagem natural, retenho memoria longa local, recupero lembrancas relevantes antes de cada turno e aciono ${['plan', 'phases', 'execution', 'verification'].join(', ')} quando isso ajuda de verdade. ${memories.length > 0 ? `Ja recuperei ${memories.length} lembranca(s) relevantes da memoria longa para esta sessao.` : 'Assim que a memoria for sendo alimentada, eu passo a reutilizar historico entre sessoes.'}`,
+      understanding: 'O usuario quer entender as capacidades do agente.',
+      updates,
+      actions: [],
+      focusView: 'workspace',
+      needsClarification: false,
+      clarificationQuestion: '',
+    }
+  }
+
   return {
     reply: runtimeNeeded
-      ? 'Entendi o seu pedido e consigo organizar a conversa como um agente de verdade. Vou atualizar a memoria operacional agora e, com o runtime conectado, disparar os proximos artefatos automaticamente.'
-      : 'Entendi o seu pedido e atualizei a memoria operacional para manter a conversa mais fluida e menos roteirizada.',
+      ? 'Entendi o seu pedido. Vou conectar esse contexto ao que ja sei, recuperar o que for relevante e acionar as proximas etapas com o runtime.'
+      : 'Entendi o seu pedido. Vou guardar esse contexto e seguir a conversa de forma natural a partir daqui.',
     understanding: truncate(userMessage, 240),
     updates,
     actions,
-    focusView: actions.at(-1) === 'verification'
-      ? 'verification'
-      : actions.at(-1) === 'execution'
-        ? 'execution'
-        : actions.at(-1) === 'phases'
-          ? 'phases'
-          : actions.at(-1) === 'plan'
-            ? 'plan'
-            : 'mission',
+    focusView:
+      actions.at(-1) === 'verification'
+        ? 'verification'
+        : actions.at(-1) === 'execution'
+          ? 'execution'
+          : actions.at(-1) === 'phases'
+            ? 'phases'
+            : actions.at(-1) === 'plan'
+              ? 'plan'
+              : 'mission',
     needsClarification: false,
     clarificationQuestion: '',
   }
@@ -229,24 +298,30 @@ function normalizeActions(workspace: TracerWorkspace, turn: AgentTurnPayload): A
   return normalized.slice(0, 5)
 }
 
-function buildAgentTurnPrompts(workspace: TracerWorkspace, userMessage: string): { system: string; user: string } {
+function buildAgentTurnPrompts(
+  workspace: TracerWorkspace,
+  userMessage: string,
+  memories: MemoryRecord[],
+): { system: string; user: string } {
   return {
-    system: `Voce e o AI Tracer, um agente conversacional com memoria, planejamento e uso de acoes internas.
-Seu estilo deve ser natural, direto e colaborativo em portugues do Brasil.
-Principios obrigatorios:
-- entenda pedidos em linguagem natural sem exigir formularios ou prefixos;
-- atualize memoria operacional a partir da conversa;
-- escolha acoes internas quando isso acelerar o progresso real;
+    system: `Voce e o AI Tracer, um agente conversacional com memoria longa, planejamento e uso de acoes internas.
+Seu trabalho neste passo e CONTROLAR o turno, nao escrever a resposta final.
+Regras obrigatorias:
+- entenda pedidos em linguagem natural sem exigir formularios, chips ou prefixos;
+- use as memorias recuperadas apenas quando elas forem realmente relevantes;
+- atualize o contexto persistente a partir da conversa;
+- escolha acoes internas quando isso acelerar progresso real;
 - faca no maximo uma pergunta curta apenas se houver bloqueio real;
 - nao finja que executou uma acao antes de ela rodar;
-- evite respostas mecanicas, pre-programadas ou tutorializadas;
-- trate as acoes disponiveis como ferramentas internas: plan, phases, execution, verification e reset.
-Retorne JSON puro e preencha todos os campos do schema.`,
+- retorne JSON puro e preencha todos os campos do schema.`,
     user: `Mensagem nova do usuario:
 ${userMessage}
 
 Workspace atual:
 ${workspaceDigest(workspace)}
+
+Memorias recuperadas:
+${serializeMemories(memories)}
 
 Ultimas mensagens:
 ${serializeConversation(workspace) || 'Sem historico relevante ainda.'}
@@ -269,16 +344,17 @@ Responda com:
   "clarificationQuestion": string
 }
 
-Regras extras:
-- se o usuario quiser que voce aja, proponha e acione as acoes necessarias;
-- se o pedido mencionar melhorar o proprio agente ou a experiencia, trate isso como contexto de produto e arquitetura;
-- use strings vazias quando objective ou desiredOutcome nao precisarem mudar;
-- evite repetir literalmente o texto do usuario sem agregar entendimento.`,
+Use o campo "reply" apenas como um rascunho interno curto do que aconteceu no turno. A resposta natural final sera gerada separadamente.`,
   }
 }
 
-function coerceAgentTurn(workspace: TracerWorkspace, userMessage: string, value: unknown): AgentTurnPayload {
-  const fallback = buildHeuristicTurn(workspace, userMessage)
+function coerceAgentTurn(
+  workspace: TracerWorkspace,
+  userMessage: string,
+  memories: MemoryRecord[],
+  value: unknown,
+): AgentTurnPayload {
+  const fallback = buildHeuristicTurn(workspace, userMessage, memories)
   const record = typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {}
   const updatesSource = typeof record.updates === 'object' && record.updates !== null ? (record.updates as Record<string, unknown>) : {}
   const rawActions = Array.isArray(record.actions) ? record.actions : fallback.actions
@@ -287,15 +363,15 @@ function coerceAgentTurn(workspace: TracerWorkspace, userMessage: string, value:
     .slice(0, 4)
 
   const turn = {
-    reply: typeof record.reply === 'string' && record.reply.trim().length >= 8 ? truncate(record.reply, 2_400) : fallback.reply,
-    understanding: typeof record.understanding === 'string' ? truncate(record.understanding, 400) : fallback.understanding,
+    reply: typeof record.reply === 'string' && record.reply.trim().length >= 8 ? truncate(sanitizeModelText(record.reply), 2_400) : fallback.reply,
+    understanding: typeof record.understanding === 'string' ? truncate(sanitizeModelText(record.understanding), 400) : fallback.understanding,
     updates: {
-      objective: typeof updatesSource.objective === 'string' ? truncate(updatesSource.objective, 4_000) : fallback.updates.objective,
-      desiredOutcome: typeof updatesSource.desiredOutcome === 'string' ? truncate(updatesSource.desiredOutcome, 2_000) : fallback.updates.desiredOutcome,
-      constraintsToAdd: uniquePush([], Array.isArray(updatesSource.constraintsToAdd) ? updatesSource.constraintsToAdd.filter((item): item is string => typeof item === 'string') : fallback.updates.constraintsToAdd, 6),
-      acceptanceCriteriaToAdd: uniquePush([], Array.isArray(updatesSource.acceptanceCriteriaToAdd) ? updatesSource.acceptanceCriteriaToAdd.filter((item): item is string => typeof item === 'string') : fallback.updates.acceptanceCriteriaToAdd, 6),
-      contextToAdd: uniquePush([], Array.isArray(updatesSource.contextToAdd) ? updatesSource.contextToAdd.filter((item): item is string => typeof item === 'string') : fallback.updates.contextToAdd, 6),
-      evidenceToAdd: uniquePush([], Array.isArray(updatesSource.evidenceToAdd) ? updatesSource.evidenceToAdd.filter((item): item is string => typeof item === 'string') : fallback.updates.evidenceToAdd, 6),
+      objective: typeof updatesSource.objective === 'string' ? truncate(sanitizeModelText(updatesSource.objective), 4_000) : fallback.updates.objective,
+      desiredOutcome: typeof updatesSource.desiredOutcome === 'string' ? truncate(sanitizeModelText(updatesSource.desiredOutcome), 2_000) : fallback.updates.desiredOutcome,
+      constraintsToAdd: uniquePush([], Array.isArray(updatesSource.constraintsToAdd) ? updatesSource.constraintsToAdd.filter((item): item is string => typeof item === 'string').map((item) => sanitizeModelText(item)) : fallback.updates.constraintsToAdd, 6),
+      acceptanceCriteriaToAdd: uniquePush([], Array.isArray(updatesSource.acceptanceCriteriaToAdd) ? updatesSource.acceptanceCriteriaToAdd.filter((item): item is string => typeof item === 'string').map((item) => sanitizeModelText(item)) : fallback.updates.acceptanceCriteriaToAdd, 6),
+      contextToAdd: uniquePush([], Array.isArray(updatesSource.contextToAdd) ? updatesSource.contextToAdd.filter((item): item is string => typeof item === 'string').map((item) => sanitizeModelText(item)) : fallback.updates.contextToAdd, 6, 500),
+      evidenceToAdd: uniquePush([], Array.isArray(updatesSource.evidenceToAdd) ? updatesSource.evidenceToAdd.filter((item): item is string => typeof item === 'string').map((item) => sanitizeModelText(item)) : fallback.updates.evidenceToAdd, 6, 500),
     },
     actions: actions.length > 0 ? actions : fallback.actions,
     focusView:
@@ -304,8 +380,7 @@ function coerceAgentTurn(workspace: TracerWorkspace, userMessage: string, value:
         ? record.focusView
         : fallback.focusView,
     needsClarification: typeof record.needsClarification === 'boolean' ? record.needsClarification : false,
-    clarificationQuestion:
-      typeof record.clarificationQuestion === 'string' ? truncate(record.clarificationQuestion, 400) : '',
+    clarificationQuestion: typeof record.clarificationQuestion === 'string' ? truncate(sanitizeModelText(record.clarificationQuestion), 400) : '',
   } satisfies AgentTurnPayload
 
   if (turn.actions.includes('verification') && workspace.verificationInput.trim().length === 0 && turn.updates.evidenceToAdd.length === 0) {
@@ -321,37 +396,35 @@ export async function runAgentTurn(
   workspace: TracerWorkspace,
   userMessage: string,
   runtime: RuntimeConnection | null,
+  memories: MemoryRecord[] = [],
 ): Promise<AgentTurnPayload> {
   if (!runtime || userMessage.trim().startsWith('/')) {
-    return buildHeuristicTurn(workspace, userMessage)
+    return buildHeuristicTurn(workspace, userMessage, memories)
   }
 
   try {
-    return await runStructuredPrompt(runtime, agentTurnPayloadSchema, buildAgentTurnPrompts(workspace, userMessage), {
+    return await runStructuredPrompt(runtime, agentTurnPayloadSchema, buildAgentTurnPrompts(workspace, userMessage, memories), {
       maxTokens: 1_100,
-      coerce: (value) => coerceAgentTurn(workspace, userMessage, value),
+      coerce: (value) => coerceAgentTurn(workspace, userMessage, memories, value),
     })
   } catch (error) {
-    const fallback = buildHeuristicTurn(workspace, userMessage)
+    const fallback = buildHeuristicTurn(workspace, userMessage, memories)
     const message = error instanceof Error ? error.message : 'Falha desconhecida.'
     return {
       ...fallback,
-      reply: `Entendi o que voce quer, mas o runtime falhou nesta rodada (${message}). Vou continuar com a memoria local e posso agir melhor assim que a conexao estabilizar.`,
+      reply: `Entendi o que voce quer, mas o runtime falhou neste passo de controle (${message}). Vou continuar com memoria local e posso aprofundar a conversa assim que a conexao estabilizar.`,
     }
   }
 }
 
 function applyAgentUpdates(goal: GoalInput, turn: AgentTurnPayload, workspace: TracerWorkspace): GoalInput {
-  const nextContext = uniquePush(
-    goal.contextNotes ? [goal.contextNotes] : [],
-    turn.updates.contextToAdd,
-    8,
-  ).join('\n\n')
+  const nextContext = uniquePush(goal.contextNotes ? [goal.contextNotes] : [], turn.updates.contextToAdd, 8, 500).join('\n\n')
 
   workspace.verificationInput = uniquePush(
     workspace.verificationInput ? [workspace.verificationInput] : [],
     turn.updates.evidenceToAdd,
     8,
+    500,
   ).join('\n\n')
 
   return {
@@ -364,17 +437,89 @@ function applyAgentUpdates(goal: GoalInput, turn: AgentTurnPayload, workspace: T
   }
 }
 
-function composeReply(turn: AgentTurnPayload, outcomes: AgentActionOutcome[], runtime: RuntimeConnection | null): string {
+function buildReplyMessages(
+  workspace: TracerWorkspace,
+  userMessage: string,
+  turn: AgentTurnPayload,
+  outcomes: AgentActionOutcome[],
+  memories: MemoryRecord[],
+): Array<{ role: 'system' | 'user' | 'assistant'; content: string }> {
+  const outcomeLines = outcomes.length > 0
+    ? outcomes.map((outcome) => `- ${outcome.action}: ${outcome.status} | ${truncate(outcome.summary, 220)}`).join('\n')
+    : 'Nenhuma acao foi executada neste turno.'
+
+  return [
+    {
+      role: 'system',
+      content: `Voce e o AI Tracer respondendo como um agente de verdade.
+Escreva em portugues do Brasil.
+Seja natural, objetivo, conversacional e inteligente.
+Regras:
+- nada de resposta genérica repetida;
+- reconheca o que o usuario quis dizer;
+- cite memoria recuperada apenas se for util;
+- se acoes foram executadas, explique isso naturalmente;
+- se faltou runtime ou evidencia, explique com elegancia e sem soar travado;
+- nao mencione JSON, schema, prompt interno ou "memoria operacional" como jargao repetitivo;
+- evite titulos markdown, blocos decorativos e listas longas quando uma resposta curta resolver;
+- so faca pergunta no final se houver bloqueio explicito neste turno.`,
+    },
+    {
+      role: 'user',
+      content: `Mensagem do usuario:
+${userMessage}
+
+Entendimento interno:
+${turn.understanding}
+
+Workspace apos atualizacoes:
+${workspaceDigest(workspace)}
+
+Memorias relevantes:
+${serializeMemories(memories)}
+
+Resultado das acoes:
+${outcomeLines}
+
+Precisa de esclarecimento explicito neste turno? ${turn.needsClarification ? 'sim' : 'nao'}
+
+Gere uma resposta final unica, fluida e util para o usuario.`,
+    },
+  ]
+}
+
+function buildHeuristicReply(
+  workspace: TracerWorkspace,
+  userMessage: string,
+  turn: AgentTurnPayload,
+  outcomes: AgentActionOutcome[],
+  runtime: RuntimeConnection | null,
+  memories: MemoryRecord[],
+): string {
+  if (isGreeting(userMessage)) {
+    return buildHeuristicTurn(workspace, userMessage, memories).reply
+  }
+
+  if (asksCapabilities(userMessage)) {
+    return buildHeuristicTurn(workspace, userMessage, memories).reply
+  }
+
   const executed = outcomes.filter((item) => item.status === 'executed')
   const skipped = outcomes.filter((item) => item.status === 'skipped')
-  const parts = [turn.reply.trim()]
+  const parts: string[] = []
+
+  parts.push(`Entendi: ${turn.understanding || truncate(userMessage, 220)}.`)
 
   if (executed.length > 0) {
-    parts.push(`Acabei de executar: ${executed.map((item) => item.action).join(', ')}.`)
+    parts.push(`Ja coloquei a conversa em movimento com ${executed.map((item) => item.action).join(', ')}.`)
+  }
+
+  if (memories.length > 0) {
+    parts.push(`Tambem recuperei ${memories.length} lembranca(s) relevantes da memoria longa local para manter continuidade entre sessoes.`)
   }
 
   if (skipped.length > 0 && !runtime) {
-    parts.push('Se voce conectar o runtime, eu gero artefatos reais nesta mesma conversa sem te empurrar para um fluxo engessado.')
+    parts.push('Para aprofundar com raciocinio do modelo e gerar artefatos reais, conecte o runtime. Ate la, eu continuo guardando contexto e preparando o proximo passo.')
   }
 
   if (turn.needsClarification && turn.clarificationQuestion) {
@@ -384,10 +529,34 @@ function composeReply(turn: AgentTurnPayload, outcomes: AgentActionOutcome[], ru
   return parts.join('\n\n')
 }
 
+async function generateConversationalReply(
+  workspace: TracerWorkspace,
+  userMessage: string,
+  turn: AgentTurnPayload,
+  outcomes: AgentActionOutcome[],
+  runtime: RuntimeConnection | null,
+  memories: MemoryRecord[],
+): Promise<string> {
+  if (!runtime) {
+    return buildHeuristicReply(workspace, userMessage, turn, outcomes, runtime, memories)
+  }
+
+  try {
+    return sanitizeModelText(await runTextPrompt(runtime, buildReplyMessages(workspace, userMessage, turn, outcomes, memories), {
+      maxTokens: 500,
+      temperature: 0.45,
+    }))
+  } catch {
+    return buildHeuristicReply(workspace, userMessage, turn, outcomes, runtime, memories)
+  }
+}
+
 export async function executeAgentTurn(
   workspace: TracerWorkspace,
   turn: AgentTurnPayload,
   runtime: RuntimeConnection | null,
+  memories: MemoryRecord[] = [],
+  userMessage = '',
 ): Promise<AgentTurnResolution> {
   const nextWorkspace = structuredClone(workspace)
   nextWorkspace.goal = applyAgentUpdates(nextWorkspace.goal, turn, nextWorkspace)
@@ -495,13 +664,27 @@ export async function executeAgentTurn(
     }
   }
 
-  const reply = composeReply(turn, outcomes, runtime)
+  const reply = await generateConversationalReply(nextWorkspace, userMessage, turn, outcomes, runtime, memories)
+  const memoryState = await rememberTurn({
+    userMessage,
+    assistantReply: reply,
+    objective: turn.updates.objective || nextWorkspace.goal.objective,
+    desiredOutcome: turn.updates.desiredOutcome || nextWorkspace.goal.desiredOutcome,
+    constraints: turn.updates.constraintsToAdd,
+    criteria: turn.updates.acceptanceCriteriaToAdd,
+    context: turn.updates.contextToAdd,
+    executedActions: outcomes.filter((item) => item.status === 'executed').map((item) => item.action),
+  })
+
+  nextWorkspace.memory = {
+    ...memoryState,
+    retrieved: memories.map((memory) => memory.text).slice(0, 8),
+  }
   nextWorkspace.conversation = [
     ...nextWorkspace.conversation,
     createMessage('agent', 'text', reply, { stage: 'agent' }),
     ...artifactMessages,
   ].slice(-200)
-
   nextWorkspace.updatedAt = nowIso()
 
   return {
@@ -509,4 +692,16 @@ export async function executeAgentTurn(
     outcomes,
     finalView: outcomes.at(-1)?.targetView ?? turn.focusView,
   }
+}
+
+export async function processAgentTurn(
+  workspace: TracerWorkspace,
+  userMessage: string,
+  runtime: RuntimeConnection | null,
+): Promise<AgentTurnResolution> {
+  const hydrated = await hydrateMemories(`${workspace.goal.objective}\n${workspace.goal.desiredOutcome}\n${userMessage}`)
+  const workspaceWithMemory = structuredClone(workspace)
+  workspaceWithMemory.memory = hydrated.snapshot
+  const turn = await runAgentTurn(workspaceWithMemory, userMessage, runtime, hydrated.records)
+  return executeAgentTurn(workspaceWithMemory, turn, runtime, hydrated.records, userMessage)
 }

@@ -7,6 +7,7 @@ Data da auditoria: `2026-03-25`
 - arquitetura static-first para GitHub Pages
 - interface principal `chat-first` com o agente como fluxo central
 - motor de turno do agente com entendimento, memoria e decisao de acoes
+- memoria longa local-first com recuperacao por relevancia
 - fluxo operacional `goal -> plan -> phases -> execution -> verification`
 - seguranca do runtime OpenRouter
 - persistencia local e exportacao do workspace
@@ -18,6 +19,8 @@ Data da auditoria: `2026-03-25`
 - a tela principal permite mostrar ou ocultar a chave sem persistir o segredo no bundle publicado
 - o bundle publicado nao contem segredo embarcado
 - a conversa principal aceita linguagem natural sem depender de prefixos obrigatorios
+- a resposta final do agente e gerada em camada propria, separada do controle estruturado do turno
+- a memoria recuperada fica visivel no inspector com registros recentes e recuperados
 - a CSP restringe conexoes ao proprio app e ao OpenRouter
 - o runtime usa timeout explicito
 - o roteamento do OpenRouter exige providers compativeis com os parametros enviados
@@ -25,6 +28,7 @@ Data da auditoria: `2026-03-25`
   - validacao estrutural
   - repair pass
   - coercion com defaults operacionais
+- saidas do modelo passam por saneamento para evitar texto corrompido e caracteres quebrados no navegador
 - regenerar `plan`, `phases` e `execution` invalida artefatos dependentes para evitar drift
 - o workspace exportado nao inclui a chave de sessao
 
@@ -48,6 +52,8 @@ Data da auditoria: `2026-03-25`
 - build de producao para GitHub Pages: `aprovado`
 - experiencia central do produto reposicionada para chat operacional: `aprovada`
 - motor do agente reposicionado para entendimento + memoria + acoes: `aprovado`
+- memoria longa local com recuperacao por relevancia: `aprovada`
+- saneamento de texto do modelo em respostas e artefatos: `aprovado`
 
 ## Riscos residuais
 

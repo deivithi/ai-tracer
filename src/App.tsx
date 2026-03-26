@@ -17,7 +17,7 @@ import {
   Sparkles,
 } from 'lucide-react'
 import { startTransition, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
-import { executeAgentTurn, runAgentTurn } from './app/agent'
+import { processAgentTurn } from './app/agent'
 import { createDemoWorkspace } from './app/demo'
 import { exportWorkspaceBundle } from './app/export'
 import { validateConnection } from './app/openrouter'
@@ -71,7 +71,7 @@ function App() {
   const [banner, setBanner] = useState<BannerMessage>({
     tone: 'neutral',
     title: 'Agente carregado',
-    body: 'A tela principal agora funciona como um chat operacional. Alimente o contexto e dispare os artefatos sem sair da conversa.',
+    body: 'A tela principal funciona como um chat de agente com memoria longa local, planejamento e execucao no mesmo fluxo.',
   })
   const [isBusy, setIsBusy] = useState<RunRecord['stage'] | null>(null)
   const [connectionDraft, setConnectionDraft] = useState({ apiKey: loadSessionKey(), model: initialPreferences.model || DEFAULT_MODEL })
@@ -244,7 +244,7 @@ function App() {
           createMessage(
             'agent',
             'text',
-            'Pode falar normalmente comigo. Eu extraio objetivo, restricoes, criterios, contexto e evidencia da conversa. Se preferir atalhos, use /plan, /phases, /execute, /verify, /export ou /reset.',
+            'Pode falar normalmente comigo. Eu entendo objetivo, restricoes, criterios, contexto e evidencias pela conversa, reutilizo memoria longa local e aciono /plan, /phases, /execute, /verify, /export ou /reset quando fizer sentido.',
             { stage: 'agent' },
           ),
         ].slice(-200),
@@ -260,29 +260,29 @@ function App() {
 
     if (normalized === '/reset' || normalized === 'resetar') {
       resetChatWorkspace()
-      appendMessage('agent', 'text', 'Workspace reiniciado. Traga um novo briefing e eu reconstruo a memoria operacional do zero.', { stage: 'agent' })
+      appendMessage('agent', 'text', 'Workspace reiniciado. Traga um novo briefing e eu reconstruo a memoria longa local deste workspace desde o inicio.', { stage: 'agent' })
       return
     }
 
     setIsBusy('agent')
     try {
-      const turn = await runAgentTurn(baseWorkspace, value, runtime)
-      const resolution = await executeAgentTurn(baseWorkspace, turn, runtime)
+      const resolution = await processAgentTurn(baseWorkspace, value, runtime)
       commitWorkspace(resolution.workspace)
       navigateTo(resolution.finalView)
 
       const executed = resolution.outcomes.filter((outcome) => outcome.status === 'executed')
       const skipped = resolution.outcomes.filter((outcome) => outcome.status === 'skipped')
+      const recovered = resolution.workspace.memory.retrieved.length
 
       setBanner({
-        tone: executed.length > 0 ? 'success' : skipped.length > 0 || turn.needsClarification ? 'warning' : 'neutral',
-        title: executed.length > 0 ? 'Agente em movimento' : turn.needsClarification ? 'Agente pedindo precisao' : 'Memoria atualizada',
+        tone: executed.length > 0 ? 'success' : skipped.length > 0 ? 'warning' : 'neutral',
+        title: executed.length > 0 ? 'Agente em movimento' : skipped.length > 0 ? 'Runtime pendente para aprofundar' : 'Contexto absorvido',
         body:
           executed.length > 0
-            ? `A conversa acionou ${executed.map((outcome) => outcome.action).join(', ')} sem depender de mensagens roteirizadas.`
+            ? `A conversa acionou ${executed.map((outcome) => outcome.action).join(', ')} com ${recovered} lembranca(s) recuperadas da memoria longa local.`
             : skipped.length > 0
-              ? 'Atualizei a memoria do agente, mas faltou runtime ou evidencia para executar todas as acoes pedidas.'
-              : 'O agente absorveu o contexto e ajustou a memoria operacional desta conversa.',
+              ? 'O agente absorveu a conversa e a memoria local, mas faltou runtime ou evidencia para executar todas as acoes pedidas.'
+              : `O agente absorveu o contexto deste turno${recovered > 0 ? ` e reutilizou ${recovered} lembranca(s) relevantes` : ''}.`,
       })
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Erro desconhecido.'
@@ -348,7 +348,7 @@ function App() {
     if (activeView === 'workspace') {
       return {
         title: workspace.name,
-        body: 'Bundle exportavel com artefatos, historico e contexto persistido localmente.',
+        body: 'Bundle exportavel com artefatos, historico e memoria longa persistida localmente.',
         bullets: [
           `Runs · ${workspace.runs.length}`,
           `Artefatos · ${[plan, phases, execution, verification].filter(Boolean).length}`,
@@ -430,7 +430,7 @@ function App() {
             <h1>Agent chat control plane</h1>
           </div>
         </div>
-        <p className="sidebar-copy">A conversa virou a tela principal. O agente absorve contexto, atualiza a memoria operacional e dispara artefatos sem sair do chat.</p>
+        <p className="sidebar-copy">A conversa virou a tela principal. O agente absorve contexto, recupera memoria longa local e dispara artefatos sem sair do chat.</p>
         <section className="rail-card">
           <div className="rail-card-header"><span className="eyebrow">Pipeline</span><ShieldCheck size={16} /></div>
           <div className="progress-grid">
@@ -508,7 +508,7 @@ function App() {
               <button className="ghost-button" onClick={() => void submitAgentMessage('/verify')} type="button"><FileSearch size={16} />Verificar</button>
             </div>
             <form className="chat-composer" onSubmit={(event) => void handleComposerSubmit(event)}>
-              <textarea aria-label="Mensagem do agente" className="text-area composer-input" onChange={(event) => setComposer(event.target.value)} placeholder="Escreva naturalmente o que voce precisa. Ex.: Quero um agente menos roteirizado, que entenda o contexto e monte o proximo passo sozinho." rows={4} value={composer} />
+                <textarea aria-label="Mensagem do agente" className="text-area composer-input" onChange={(event) => setComposer(event.target.value)} placeholder="Escreva naturalmente o que voce precisa. Ex.: Quero um agente que lembre das nossas decisoes, converse melhor e monte o proximo passo sozinho." rows={4} value={composer} />
               <div className="composer-actions">
                 <label className="upload-button"><Paperclip size={16} />Importar contexto<input className="hidden-input" multiple onChange={(event) => void handleAttachmentImport(event.target.files)} type="file" /></label>
                 <button className="primary-button" disabled={!composer.trim()} type="submit"><SendHorizontal size={16} />Enviar ao agente</button>
@@ -523,7 +523,18 @@ function App() {
         <div className="dock-tabs">{dockViews.map((item) => <button key={item.id} className={`dock-tab ${activeView === item.id ? 'is-active' : ''}`} onClick={() => navigateTo(item.id)} type="button">{item.label}</button>)}</div>
         <section className="dock-card"><p>{dockSummary.body}</p></section>
         <section className="dock-card"><span className="eyebrow">Sinais ativos</span><ul className="dock-list">{dockSummary.bullets.map((item) => <li key={item}>{truncate(item, 180)}</li>)}</ul></section>
-        <section className="dock-card"><span className="eyebrow">Memoria operacional</span><div className="memory-stack"><div><strong>Objetivo</strong><p>{workspace.goal.objective}</p></div><div><strong>Resultado</strong><p>{workspace.goal.desiredOutcome}</p></div><div><strong>Verification input</strong><p>{workspace.verificationInput || 'Nenhuma evidencia registrada ainda.'}</p></div></div></section>
+        <section className="dock-card">
+          <span className="eyebrow">Memoria longa local</span>
+          <div className="memory-stack">
+            <div><strong>Status</strong><p>{workspace.memory.summary || 'A memoria ainda sera preenchida pelos proximos turnos.'}</p></div>
+            <div><strong>Objetivo</strong><p>{workspace.goal.objective}</p></div>
+            <div><strong>Resultado</strong><p>{workspace.goal.desiredOutcome}</p></div>
+            <div><strong>Registros</strong><p>{workspace.memory.totalEntries} itens persistidos neste navegador.</p></div>
+            <div><strong>Recuperado agora</strong><p>{workspace.memory.retrieved.length > 0 ? workspace.memory.retrieved.join(' | ') : 'Nenhuma lembranca relevante recuperada neste turno.'}</p></div>
+            <div><strong>Recentes</strong><p>{workspace.memory.recent.length > 0 ? workspace.memory.recent.join(' | ') : 'Nenhum registro recente ainda.'}</p></div>
+            <div><strong>Verification input</strong><p>{workspace.verificationInput || 'Nenhuma evidencia registrada ainda.'}</p></div>
+          </div>
+        </section>
       </aside>
     </div>
   )

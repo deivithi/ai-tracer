@@ -97,7 +97,7 @@ function parseApiError(status: number, body: unknown): string {
 async function request(
   messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
   runtime: RuntimeConnection,
-  options?: { maxTokens?: number },
+  options?: { maxTokens?: number; jsonMode?: boolean; temperature?: number },
 ) {
   const controller = new AbortController()
   const timeoutId = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
@@ -116,9 +116,9 @@ async function request(
       body: JSON.stringify({
         model: runtime.model,
         messages,
-        temperature: 0.2,
+        temperature: options?.temperature ?? 0.2,
         max_tokens: options?.maxTokens ?? 900,
-        response_format: { type: 'json_object' },
+        ...(options?.jsonMode === false ? {} : { response_format: { type: 'json_object' } }),
         provider: {
           require_parameters: true,
           sort: 'throughput',
@@ -158,7 +158,7 @@ export async function validateConnection(runtime: RuntimeConnection): Promise<vo
           { role: 'user', content: 'Retorne {"status":"ready","provider":"openrouter"}' },
         ],
         runtime,
-        { maxTokens: 64 },
+        { maxTokens: 64, jsonMode: true },
       )
 
       const content = normalizeContent(response.choices[0]?.message.content)
@@ -223,4 +223,23 @@ ${details}`,
       throw new Error(`Falha ao validar a resposta estruturada do modelo: ${repairDetails}`)
     }
   }
+}
+
+export async function runTextPrompt(
+  runtime: RuntimeConnection,
+  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
+  options?: { maxTokens?: number; temperature?: number },
+): Promise<string> {
+  const response = await request(messages, runtime, {
+    maxTokens: options?.maxTokens ?? 700,
+    jsonMode: false,
+    temperature: options?.temperature ?? 0.4,
+  })
+
+  const raw = normalizeContent(response.choices[0]?.message.content).trim()
+  if (!raw) {
+    throw new Error('O modelo respondeu sem texto para a mensagem conversacional.')
+  }
+
+  return raw
 }

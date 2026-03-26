@@ -25,7 +25,7 @@ test.describe('live flow', () => {
       'Quero transformar o AI Tracer em um agente realmente inteligente, com conversa fluida, memoria operacional e menos mensagens roteirizadas.',
     )
     await page.getByRole('button', { name: /Enviar ao agente/i }).click()
-    await expect(page.getByText(/Acabei de executar:|Entendi/i)).toBeVisible({ timeout: 90_000 })
+    await expect(page.locator('.chat-thread .chat-agent.chat-text').last()).toContainText(/agente|memoria|fase|plano/i, { timeout: 90_000 })
 
     await page.getByLabel('Mensagem do agente').fill('O resultado desejado e um agente capaz de entender linguagem natural, agir com autonomia e manter a conversa coerente.')
     await page.getByRole('button', { name: /Enviar ao agente/i }).click()
@@ -40,15 +40,15 @@ test.describe('live flow', () => {
 
     await page.getByRole('button', { name: /Planejar/i }).click()
 
-    await expect(page.locator('.chat-artifact-tag').filter({ hasText: 'Plan' })).toBeVisible({ timeout: 180_000 })
+    await expect(page.locator('.chat-artifact-tag').filter({ hasText: 'Plan' }).last()).toBeVisible({ timeout: 180_000 })
 
     await page.getByRole('button', { name: /Fases/i }).click()
 
-    await expect(page.locator('.chat-artifact-tag').filter({ hasText: 'Phases' })).toBeVisible({ timeout: 180_000 })
+    await expect(page.locator('.chat-artifact-tag').filter({ hasText: 'Phases' }).last()).toBeVisible({ timeout: 180_000 })
 
     await page.getByRole('button', { name: /Execucao/i }).click()
 
-    await expect(page.locator('.chat-artifact-tag').filter({ hasText: 'Execution' })).toBeVisible({ timeout: 180_000 })
+    await expect(page.locator('.chat-artifact-tag').filter({ hasText: 'Execution' }).last()).toBeVisible({ timeout: 180_000 })
 
     await page.getByLabel('Mensagem do agente').fill(
       'Tenho a seguinte evidencia: implementacao simulada com memoria operacional, plano, fases, execution e runtime validado via OpenRouter.',
@@ -56,6 +56,6 @@ test.describe('live flow', () => {
     await page.getByRole('button', { name: /Enviar ao agente/i }).click()
     await page.getByRole('button', { name: /Verificar/i }).click()
 
-    await expect(page.locator('.chat-artifact-tag').filter({ hasText: 'Verification' })).toBeVisible({ timeout: 180_000 })
+    await expect(page.locator('.chat-artifact-tag').filter({ hasText: 'Verification' }).last()).toBeVisible({ timeout: 180_000 })
   })
 })
