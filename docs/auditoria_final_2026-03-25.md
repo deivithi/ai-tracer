@@ -6,6 +6,7 @@ Data da auditoria: `2026-03-25`
 
 - arquitetura static-first para GitHub Pages
 - interface principal `chat-first` com o agente como fluxo central
+- motor de turno do agente com entendimento, memoria e decisao de acoes
 - fluxo operacional `goal -> plan -> phases -> execution -> verification`
 - seguranca do runtime OpenRouter
 - persistencia local e exportacao do workspace
@@ -16,6 +17,7 @@ Data da auditoria: `2026-03-25`
 - a chave do OpenRouter fica apenas em `sessionStorage`
 - a tela principal permite mostrar ou ocultar a chave sem persistir o segredo no bundle publicado
 - o bundle publicado nao contem segredo embarcado
+- a conversa principal aceita linguagem natural sem depender de prefixos obrigatorios
 - a CSP restringe conexoes ao proprio app e ao OpenRouter
 - o runtime usa timeout explicito
 - o roteamento do OpenRouter exige providers compativeis com os parametros enviados
@@ -45,6 +47,7 @@ Data da auditoria: `2026-03-25`
 - smoke live ponta a ponta com `minimax/minimax-m2.7`: `aprovado`
 - build de producao para GitHub Pages: `aprovado`
 - experiencia central do produto reposicionada para chat operacional: `aprovada`
+- motor do agente reposicionado para entendimento + memoria + acoes: `aprovado`
 
 ## Riscos residuais
 

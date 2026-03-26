@@ -4,7 +4,9 @@ const boundedText = (min: number, max: number) => z.string().trim().min(min).max
 
 export const artifactTypeSchema = z.enum(['plan', 'phases', 'execution', 'verification'])
 export const severitySchema = z.enum(['critical', 'major', 'minor', 'outdated'])
-export const runStageSchema = z.enum(['connect', 'plan', 'phases', 'execution', 'verification', 'export'])
+export const runStageSchema = z.enum(['agent', 'connect', 'plan', 'phases', 'execution', 'verification', 'export'])
+export const viewIdSchema = z.enum(['mission', 'goal', 'plan', 'phases', 'execution', 'verification', 'workspace'])
+export const agentActionSchema = z.enum(['plan', 'phases', 'execution', 'verification', 'reset'])
 
 export const attachmentSchema = z.object({
   id: boundedText(4, 80),
@@ -31,6 +33,23 @@ export const goalInputSchema = z.object({
   acceptanceCriteria: z.array(boundedText(1, 280)).max(12),
   contextNotes: z.string().max(6_000).default(''),
   attachments: z.array(attachmentSchema).max(6),
+})
+
+export const agentTurnPayloadSchema = z.object({
+  reply: boundedText(8, 2_400),
+  understanding: z.string().trim().max(400).default(''),
+  updates: z.object({
+    objective: z.string().trim().max(4_000).default(''),
+    desiredOutcome: z.string().trim().max(2_000).default(''),
+    constraintsToAdd: z.array(boundedText(1, 280)).max(6).default([]),
+    acceptanceCriteriaToAdd: z.array(boundedText(1, 280)).max(6).default([]),
+    contextToAdd: z.array(boundedText(1, 600)).max(6).default([]),
+    evidenceToAdd: z.array(boundedText(1, 600)).max(6).default([]),
+  }),
+  actions: z.array(agentActionSchema).max(4).default([]),
+  focusView: viewIdSchema.default('mission'),
+  needsClarification: z.boolean().default(false),
+  clarificationQuestion: z.string().trim().max(400).default(''),
 })
 
 export const planPayloadSchema = z.object({
@@ -186,6 +205,8 @@ export const workspaceSchema = z.object({
 export type AttachmentRecord = z.infer<typeof attachmentSchema>
 export type ChatMessage = z.infer<typeof chatMessageSchema>
 export type GoalInput = z.infer<typeof goalInputSchema>
+export type AgentAction = z.infer<typeof agentActionSchema>
+export type AgentTurnPayload = z.infer<typeof agentTurnPayloadSchema>
 export type PlanPayload = z.infer<typeof planPayloadSchema>
 export type PhasePayload = z.infer<typeof phasePayloadSchema>
 export type ExecutionPayload = z.infer<typeof executionPayloadSchema>

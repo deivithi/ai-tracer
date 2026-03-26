@@ -1,6 +1,5 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import {
-  Bot,
   Command,
   Download,
   Eye,
@@ -18,26 +17,14 @@ import {
   Sparkles,
 } from 'lucide-react'
 import { startTransition, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { executeAgentTurn, runAgentTurn } from './app/agent'
 import { createDemoWorkspace } from './app/demo'
-import { generateExecution, generatePhases, generatePlan, generateVerification } from './app/engine'
 import { exportWorkspaceBundle } from './app/export'
 import { validateConnection } from './app/openrouter'
-import { goalInputSchema, type ChatMessage, type RunRecord, type TracerWorkspace } from './app/schemas'
+import { type ChatMessage, type RunRecord, type TracerWorkspace } from './app/schemas'
 import { clearSessionKey, loadPreferences, loadSessionKey, loadWorkspace, savePreferences, saveSessionKey, saveWorkspace } from './app/storage'
 import type { BannerMessage, RuntimeConnection, RuntimePreferences, ViewId } from './app/types'
 import { DEFAULT_MODEL, createId, formatDate, nowIso, readFiles, resolveHash, setHash } from './app/utils'
-
-type ComposerMode = 'objective' | 'outcome' | 'constraint' | 'criteria' | 'context' | 'evidence' | 'command'
-
-const composerModes: Array<{ id: ComposerMode; label: string; hint: string }> = [
-  { id: 'objective', label: 'Objetivo', hint: 'Atualiza o objetivo central' },
-  { id: 'outcome', label: 'Resultado', hint: 'Define o resultado desejado' },
-  { id: 'constraint', label: 'Restricao', hint: 'Adiciona uma nova restricao' },
-  { id: 'criteria', label: 'Criterio', hint: 'Adiciona criterio de aceite' },
-  { id: 'context', label: 'Contexto', hint: 'Enriquece a memoria do agente' },
-  { id: 'evidence', label: 'Evidencia', hint: 'Preenche a verificacao final' },
-  { id: 'command', label: 'Comando', hint: 'Dispara /plan, /phases, /execute...' },
-]
 
 const dockViews: Array<{ id: ViewId; label: string }> = [
   { id: 'mission', label: 'Resumo' },
@@ -89,7 +76,6 @@ function App() {
   const [isBusy, setIsBusy] = useState<RunRecord['stage'] | null>(null)
   const [connectionDraft, setConnectionDraft] = useState({ apiKey: loadSessionKey(), model: initialPreferences.model || DEFAULT_MODEL })
   const [composer, setComposer] = useState('')
-  const [composerMode, setComposerMode] = useState<ComposerMode>('objective')
   const [showKey, setShowKey] = useState(false)
   const threadRef = useRef<HTMLDivElement | null>(null)
 
@@ -128,6 +114,15 @@ function App() {
   const execution = workspace.artifacts.execution
   const verification = workspace.artifacts.verification
 
+  function commitWorkspace(nextWorkspace: TracerWorkspace) {
+    const next = { ...nextWorkspace, updatedAt: nowIso() }
+    startTransition(() => {
+      setWorkspace(next)
+      saveWorkspace(next)
+    })
+    return next
+  }
+
   function updateWorkspace(transform: (current: TracerWorkspace) => TracerWorkspace) {
     startTransition(() =>
       setWorkspace((current) => {
@@ -148,20 +143,6 @@ function App() {
 
   function appendMessage(role: ChatMessage['role'], kind: ChatMessage['kind'], text: string, extras?: Partial<Pick<ChatMessage, 'artifactType' | 'stage'>>) {
     appendMessages([createMessage(role, kind, text, extras)])
-  }
-
-  function updateGoalField(field: 'objective' | 'desiredOutcome' | 'contextNotes', value: string) {
-    updateWorkspace((current) => ({ ...current, goal: { ...current.goal, [field]: value } }))
-  }
-
-  function appendGoalListItem(field: 'constraints' | 'acceptanceCriteria', value: string) {
-    updateWorkspace((current) => ({
-      ...current,
-      goal: {
-        ...current.goal,
-        [field]: [...current.goal[field], value.trim()].filter(Boolean).slice(-12),
-      },
-    }))
   }
 
   async function handleAttachmentImport(files: FileList | null) {
@@ -222,257 +203,105 @@ function App() {
     setBanner({ tone: 'neutral', title: 'Runtime desconectado', body: 'A chave foi removida da sessao. O chat continua com os artefatos locais.' })
   }
 
-  async function withStage(stage: RunRecord['stage'], action: () => Promise<void>, successTitle: string, successBody: string) {
-    if ((stage === 'plan' && !goalInputSchema.safeParse(workspace.goal).success) || !runtime) {
-      setBanner({ tone: 'warning', title: 'Pre-requisito ausente', body: 'Revise objetivo, resultado desejado e runtime antes de seguir.' })
-      appendMessage('agent', 'status', 'Faltam pre-requisitos para rodar esta etapa. Revise objetivo, resultado desejado e runtime.', { stage })
-      return
-    }
-
-    setIsBusy(stage)
-    try {
-      await action()
-      setBanner({ tone: 'success', title: successTitle, body: successBody })
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Erro desconhecido.'
-      appendRun(createRun(stage, 'error', `Falha em ${stage}.`, message))
-      appendMessage('agent', 'status', `Falha em ${stage}: ${message}`, { stage })
-      setBanner({ tone: 'danger', title: `Falha em ${stage}`, body: message })
-    } finally {
-      setIsBusy(null)
-    }
-  }
-
-  async function runPlanStage() {
-    await withStage(
-      'plan',
-      async () => {
-        const nextPlan = await generatePlan(workspace.goal, runtime as RuntimeConnection)
-        updateWorkspace((current) => ({
-          ...current,
-          mode: 'live',
-          artifacts: { ...current.artifacts, plan: nextPlan, phases: null, execution: null, verification: null },
-        }))
-        appendRun(createRun('plan', 'success', 'Plano gerado.', nextPlan.title))
-        appendMessages([
-          createMessage('agent', 'artifact', `Plano pronto: ${nextPlan.title}. ${nextPlan.payload.executiveSummary}`, { artifactType: 'plan', stage: 'plan' }),
-          createMessage('agent', 'status', `North star capturado. Primeiro movimento sugerido: ${nextPlan.payload.firstMove}`, { stage: 'plan' }),
-        ])
-        navigateTo('plan')
-      },
-      'Plano pronto',
-      'O agente consolidou o objetivo em um plano operacional auditavel.',
-    )
-  }
-
-  async function runPhasesStage() {
-    if (!plan) return
-    await withStage(
-      'phases',
-      async () => {
-        const nextPhases = await generatePhases(workspace.goal, plan, runtime as RuntimeConnection)
-        updateWorkspace((current) => ({
-          ...current,
-          artifacts: { ...current.artifacts, phases: nextPhases, execution: null, verification: null },
-        }))
-        appendRun(createRun('phases', 'success', 'Fases geradas.', nextPhases.title))
-        appendMessages([
-          createMessage('agent', 'artifact', `Phases prontas: ${nextPhases.payload.sequencingLogic}`, { artifactType: 'phases', stage: 'phases' }),
-          createMessage('agent', 'status', `A execucao foi quebrada em ${nextPhases.payload.phases.length} etapa(s) com deliverables claros.`, { stage: 'phases' }),
-        ])
-        navigateTo('phases')
-      },
-      'Phases prontas',
-      'O agente organizou a entrega em uma sequencia operacional clara.',
-    )
-  }
-
-  async function runExecutionStage() {
-    if (!plan) return
-    await withStage(
-      'execution',
-      async () => {
-        const nextExecution = await generateExecution(workspace.goal, plan, phases, runtime as RuntimeConnection)
-        updateWorkspace((current) => ({
-          ...current,
-          artifacts: { ...current.artifacts, execution: nextExecution, verification: null },
-        }))
-        appendRun(createRun('execution', 'success', 'Pacote de execucao gerado.', nextExecution.title))
-        appendMessages([
-          createMessage('agent', 'artifact', `Execution packet pronto: ${nextExecution.payload.executionSummary}`, { artifactType: 'execution', stage: 'execution' }),
-          createMessage('agent', 'status', 'Checklist, evidencias e handoff packets foram atualizados no chat e no inspector.', { stage: 'execution' }),
-        ])
-        navigateTo('execution')
-      },
-      'Execution pronta',
-      'O agente montou o pacote operacional para execucao real.',
-    )
-  }
-
-  async function runVerificationStage() {
-    if (!plan || !execution) return
-    await withStage(
-      'verification',
-      async () => {
-        const nextVerification = await generateVerification(
-          workspace.goal,
-          plan,
-          execution,
-          workspace.verificationInput,
-          runtime as RuntimeConnection,
-        )
-        updateWorkspace((current) => ({
-          ...current,
-          artifacts: { ...current.artifacts, verification: nextVerification },
-        }))
-        appendRun(createRun('verification', 'success', 'Verificacao concluida.', nextVerification.title))
-        appendMessages([
-          createMessage(
-            'agent',
-            'artifact',
-            `Verification ${nextVerification.payload.decision.toUpperCase()}: ${nextVerification.payload.summary}`,
-            { artifactType: 'verification', stage: 'verification' },
-          ),
-          createMessage('agent', 'status', `Proximo movimento sugerido: ${nextVerification.payload.nextMove}`, { stage: 'verification' }),
-        ])
-        navigateTo('verification')
-      },
-      'Verification pronta',
-      'A auditoria comparou o pacote de execucao com a evidencia informada.',
-    )
-  }
-
-  async function handleExport() {
-    await exportWorkspaceBundle(workspace)
-    appendRun(createRun('export', 'success', 'Workspace exportado.', workspace.name))
-    appendMessage('agent', 'status', 'Bundle exportado com artefatos, historico e contexto anexado.', { stage: 'export' })
+  async function handleExport(targetWorkspace: TracerWorkspace = workspace) {
+    await exportWorkspaceBundle(targetWorkspace)
+    updateWorkspace((current) => ({
+      ...current,
+      runs: [createRun('export', 'success', 'Workspace exportado.', targetWorkspace.name), ...current.runs].slice(0, 60),
+      conversation: [
+        ...current.conversation,
+        createMessage('agent', 'status', 'Bundle exportado com artefatos, historico e contexto anexado.', { stage: 'export' }),
+      ].slice(-200),
+    }))
     setBanner({ tone: 'success', title: 'Bundle exportado', body: 'O pacote do workspace foi baixado com sucesso.' })
   }
 
   function resetChatWorkspace() {
-    setWorkspace(createDemoWorkspace())
+    const nextWorkspace = createDemoWorkspace()
+    commitWorkspace(nextWorkspace)
     setComposer('')
-    setComposerMode('objective')
     navigateTo('mission')
     setBanner({ tone: 'neutral', title: 'Workspace resetado', body: 'O chat voltou para a seed demo, pronto para uma nova rodada.' })
   }
 
-  async function handleCommand(input: string) {
-    const normalized = input.trim().toLowerCase()
+  async function submitAgentMessage(rawValue: string) {
+    const value = rawValue.trim()
+    if (!value) return
 
-    if (!normalized) return
+    const userMessage = createMessage('user', 'text', value)
+    const baseWorkspace = structuredClone(workspace)
+    baseWorkspace.conversation = [...baseWorkspace.conversation, userMessage].slice(-200)
+    commitWorkspace(baseWorkspace)
+    setComposer('')
+
+    const normalized = value.toLowerCase()
 
     if (normalized === '/help' || normalized === 'help' || normalized === 'comandos') {
-      appendMessage(
-        'agent',
-        'status',
-        'Comandos disponiveis: /plan, /phases, /execute, /verify, /export e /reset. Use os chips do composer para atualizar objetivo, contexto, restricoes, criterios e evidencias.',
-      )
-      return
-    }
-
-    if (normalized === '/plan' || normalized === 'gerar plano' || normalized === 'planejar') {
-      await runPlanStage()
-      return
-    }
-
-    if (normalized === '/phases' || normalized === 'gerar fases' || normalized === 'fases') {
-      await runPhasesStage()
-      return
-    }
-
-    if (normalized === '/execute' || normalized === '/execution' || normalized === 'gerar execucao' || normalized === 'executar') {
-      await runExecutionStage()
-      return
-    }
-
-    if (normalized === '/verify' || normalized === 'verificar' || normalized === 'rodar verificacao') {
-      await runVerificationStage()
+      updateWorkspace((current) => ({
+        ...current,
+        conversation: [
+          ...current.conversation,
+          createMessage(
+            'agent',
+            'text',
+            'Pode falar normalmente comigo. Eu extraio objetivo, restricoes, criterios, contexto e evidencia da conversa. Se preferir atalhos, use /plan, /phases, /execute, /verify, /export ou /reset.',
+            { stage: 'agent' },
+          ),
+        ].slice(-200),
+      }))
+      setBanner({ tone: 'neutral', title: 'Ajuda do agente', body: 'A conversa agora e livre. Os slash commands continuam disponiveis como atalho.' })
       return
     }
 
     if (normalized === '/export' || normalized === 'exportar') {
-      await handleExport()
+      await handleExport(baseWorkspace)
       return
     }
 
     if (normalized === '/reset' || normalized === 'resetar') {
       resetChatWorkspace()
-      appendMessage('agent', 'status', 'Workspace resetado. Traga um novo briefing e eu reabro o loop do zero.')
+      appendMessage('agent', 'text', 'Workspace reiniciado. Traga um novo briefing e eu reconstruo a memoria operacional do zero.', { stage: 'agent' })
       return
     }
 
-    appendMessage('agent', 'status', 'Comando nao reconhecido. Use /help para ver o repertorio operacional do chat.')
+    setIsBusy('agent')
+    try {
+      const turn = await runAgentTurn(baseWorkspace, value, runtime)
+      const resolution = await executeAgentTurn(baseWorkspace, turn, runtime)
+      commitWorkspace(resolution.workspace)
+      navigateTo(resolution.finalView)
+
+      const executed = resolution.outcomes.filter((outcome) => outcome.status === 'executed')
+      const skipped = resolution.outcomes.filter((outcome) => outcome.status === 'skipped')
+
+      setBanner({
+        tone: executed.length > 0 ? 'success' : skipped.length > 0 || turn.needsClarification ? 'warning' : 'neutral',
+        title: executed.length > 0 ? 'Agente em movimento' : turn.needsClarification ? 'Agente pedindo precisao' : 'Memoria atualizada',
+        body:
+          executed.length > 0
+            ? `A conversa acionou ${executed.map((outcome) => outcome.action).join(', ')} sem depender de mensagens roteirizadas.`
+            : skipped.length > 0
+              ? 'Atualizei a memoria do agente, mas faltou runtime ou evidencia para executar todas as acoes pedidas.'
+              : 'O agente absorveu o contexto e ajustou a memoria operacional desta conversa.',
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Erro desconhecido.'
+      const failedWorkspace = structuredClone(baseWorkspace)
+      failedWorkspace.runs = [createRun('agent', 'error', 'Falha no turno do agente.', message), ...failedWorkspace.runs].slice(0, 60)
+      failedWorkspace.conversation = [
+        ...failedWorkspace.conversation,
+        createMessage('agent', 'status', `Falhei neste turno do agente: ${message}`, { stage: 'agent' }),
+      ].slice(-200)
+      commitWorkspace(failedWorkspace)
+      setBanner({ tone: 'danger', title: 'Falha no turno do agente', body: message })
+    } finally {
+      setIsBusy(null)
+    }
   }
 
   async function handleComposerSubmit(event: FormEvent) {
     event.preventDefault()
-    const value = composer.trim()
-    if (!value) return
-
-    appendMessage('user', 'text', value)
-    setComposer('')
-
-    const lowered = value.toLowerCase()
-    const prefixedMode =
-      lowered.startsWith('objetivo:') ? 'objective'
-        : lowered.startsWith('resultado:') ? 'outcome'
-          : lowered.startsWith('restricao:') ? 'constraint'
-            : lowered.startsWith('criterio:') ? 'criteria'
-              : lowered.startsWith('contexto:') ? 'context'
-                : lowered.startsWith('evidencia:') ? 'evidence'
-                  : lowered.startsWith('/') ? 'command'
-                    : composerMode
-
-    const normalizedValue = prefixedMode === composerMode || !value.includes(':') ? value : value.split(':').slice(1).join(':').trim()
-
-    if (prefixedMode === 'command') {
-      await handleCommand(value)
-      return
-    }
-
-    if (prefixedMode === 'objective') {
-      updateGoalField('objective', normalizedValue)
-      appendMessage('agent', 'status', `Objetivo central atualizado para: ${normalizedValue}`)
-      return
-    }
-
-    if (prefixedMode === 'outcome') {
-      updateGoalField('desiredOutcome', normalizedValue)
-      appendMessage('agent', 'status', `Resultado desejado atualizado para: ${normalizedValue}`)
-      return
-    }
-
-    if (prefixedMode === 'constraint') {
-      appendGoalListItem('constraints', normalizedValue)
-      appendMessage('agent', 'status', `Restricao registrada: ${normalizedValue}`)
-      return
-    }
-
-    if (prefixedMode === 'criteria') {
-      appendGoalListItem('acceptanceCriteria', normalizedValue)
-      appendMessage('agent', 'status', `Criterio de aceite registrado: ${normalizedValue}`)
-      return
-    }
-
-    if (prefixedMode === 'evidence') {
-      updateWorkspace((current) => ({
-        ...current,
-        verificationInput: [current.verificationInput, normalizedValue].filter(Boolean).join('\n\n'),
-      }))
-      appendMessage('agent', 'status', 'Evidencia adicionada ao bloco de verification.')
-      navigateTo('verification')
-      return
-    }
-
-    updateWorkspace((current) => ({
-      ...current,
-      goal: {
-        ...current.goal,
-        contextNotes: [current.goal.contextNotes, normalizedValue].filter(Boolean).join('\n\n'),
-      },
-    }))
-    appendMessage('agent', 'status', 'Contexto adicional absorvido pela memoria operacional do agente.')
+    await submitAgentMessage(composer)
   }
 
   const stageProgress = [
@@ -673,17 +502,13 @@ function App() {
 
           <section className="chat-tools">
             <div className="quick-action-row">
-              <button className="ghost-button" onClick={() => void runPlanStage()} type="button"><Radar size={16} />Gerar plan</button>
-              <button className="ghost-button" onClick={() => void runPhasesStage()} type="button"><Layers3 size={16} />Gerar phases</button>
-              <button className="ghost-button" onClick={() => void runExecutionStage()} type="button"><PlayCircle size={16} />Gerar execution</button>
-              <button className="ghost-button" onClick={() => void runVerificationStage()} type="button"><FileSearch size={16} />Rodar verification</button>
+              <button className="ghost-button" onClick={() => void submitAgentMessage('/plan')} type="button"><Radar size={16} />Planejar</button>
+              <button className="ghost-button" onClick={() => void submitAgentMessage('/phases')} type="button"><Layers3 size={16} />Fases</button>
+              <button className="ghost-button" onClick={() => void submitAgentMessage('/execute')} type="button"><PlayCircle size={16} />Execucao</button>
+              <button className="ghost-button" onClick={() => void submitAgentMessage('/verify')} type="button"><FileSearch size={16} />Verificar</button>
             </div>
-            <div className="composer-mode-row">
-              {composerModes.map((mode) => <button key={mode.id} className={`mode-chip ${composerMode === mode.id ? 'is-active' : ''}`} onClick={() => setComposerMode(mode.id)} type="button">{mode.label}</button>)}
-            </div>
-            <div className="composer-hint"><Bot size={16} /><p>{composerModes.find((item) => item.id === composerMode)?.hint}</p></div>
             <form className="chat-composer" onSubmit={(event) => void handleComposerSubmit(event)}>
-              <textarea aria-label="Mensagem do agente" className="text-area composer-input" onChange={(event) => setComposer(event.target.value)} placeholder="Escreva aqui. Ex.: Objetivo: criar um chat operacional. Ou use /plan para gerar o primeiro artefato." rows={4} value={composer} />
+              <textarea aria-label="Mensagem do agente" className="text-area composer-input" onChange={(event) => setComposer(event.target.value)} placeholder="Escreva naturalmente o que voce precisa. Ex.: Quero um agente menos roteirizado, que entenda o contexto e monte o proximo passo sozinho." rows={4} value={composer} />
               <div className="composer-actions">
                 <label className="upload-button"><Paperclip size={16} />Importar contexto<input className="hidden-input" multiple onChange={(event) => void handleAttachmentImport(event.target.files)} type="file" /></label>
                 <button className="primary-button" disabled={!composer.trim()} type="submit"><SendHorizontal size={16} />Enviar ao agente</button>

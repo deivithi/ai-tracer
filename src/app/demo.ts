@@ -15,14 +15,7 @@ export function createDemoWorkspace(): TracerWorkspace {
         role: 'agent',
         kind: 'text',
         createdAt: timestamp,
-        text: 'Sou o AI Tracer. Traga objetivo, resultado desejado, restricoes e criterios de aceite aqui no chat para eu estruturar o plano.',
-      },
-      {
-        id: 'msg-demo-02',
-        role: 'agent',
-        kind: 'status',
-        createdAt: timestamp,
-        text: 'Dica: use o chat para atualizar contexto e os comandos rapidos para gerar plan, phases, execution e verification.',
+        text: 'Sou o AI Tracer. Me diga naturalmente o que voce quer construir, corrigir, auditar ou organizar. Eu vou entender o contexto, atualizar a memoria e sugerir o proximo passo certo.',
       },
     ],
     goal: {

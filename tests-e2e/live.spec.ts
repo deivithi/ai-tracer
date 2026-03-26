@@ -21,37 +21,41 @@ test.describe('live flow', () => {
     await page.getByRole('button', { name: /conectar runtime|revalidar runtime/i }).click()
     await expect(page.getByText('Runtime conectado', { exact: true })).toBeVisible({ timeout: 45_000 })
 
-    await page.getByLabel('Mensagem do agente').fill('Objetivo: Planejar um produto AI Tracer robusto, seguro, leve e pronto para GitHub Pages.')
-    await page.getByRole('button', { name: /Enviar ao agente/i }).click()
-    await page.getByLabel('Mensagem do agente').fill('Resultado: Gerar um plano spec-driven utilizavel e auditavel.')
-    await page.getByRole('button', { name: /Enviar ao agente/i }).click()
-    await page.getByLabel('Mensagem do agente').fill('Restricao: Sem segredos no bundle')
-    await page.getByRole('button', { name: /Enviar ao agente/i }).click()
-    await page.getByLabel('Mensagem do agente').fill('Restricao: UI dark mode premium')
-    await page.getByRole('button', { name: /Enviar ao agente/i }).click()
-    await page.getByLabel('Mensagem do agente').fill('Criterio: Plano coerente')
-    await page.getByRole('button', { name: /Enviar ao agente/i }).click()
-    await page.getByLabel('Mensagem do agente').fill('Criterio: Fases rastreaveis')
-    await page.getByRole('button', { name: /Enviar ao agente/i }).click()
-
-    await page.getByRole('button', { name: /Gerar plan/i }).click()
-
-    await expect(page.getByText(/Plano pronto:/i)).toBeVisible({ timeout: 180_000 })
-
-    await page.getByRole('button', { name: /Gerar phases/i }).click()
-
-    await expect(page.getByText(/Phases prontas:/i)).toBeVisible({ timeout: 180_000 })
-
-    await page.getByRole('button', { name: /Gerar execution/i }).click()
-
-    await expect(page.getByText(/Execution packet pronto:/i)).toBeVisible({ timeout: 180_000 })
-
     await page.getByLabel('Mensagem do agente').fill(
-      'Evidencia: Implementacao simulada com fluxo plan -> phases -> execution persistido localmente, runtime validado via OpenRouter, exportacao disponivel e verificacao auditavel pronta para uso.',
+      'Quero transformar o AI Tracer em um agente realmente inteligente, com conversa fluida, memoria operacional e menos mensagens roteirizadas.',
     )
     await page.getByRole('button', { name: /Enviar ao agente/i }).click()
-    await page.getByRole('button', { name: /Rodar verification/i }).click()
+    await expect(page.getByText(/Acabei de executar:|Entendi/i)).toBeVisible({ timeout: 90_000 })
 
-    await expect(page.getByText(/Verification /i)).toBeVisible({ timeout: 180_000 })
+    await page.getByLabel('Mensagem do agente').fill('O resultado desejado e um agente capaz de entender linguagem natural, agir com autonomia e manter a conversa coerente.')
+    await page.getByRole('button', { name: /Enviar ao agente/i }).click()
+    await page.getByLabel('Mensagem do agente').fill('Nao podemos expor segredos no bundle publicado.')
+    await page.getByRole('button', { name: /Enviar ao agente/i }).click()
+    await page.getByLabel('Mensagem do agente').fill('A interface precisa continuar dark mode premium e leve.')
+    await page.getByRole('button', { name: /Enviar ao agente/i }).click()
+    await page.getByLabel('Mensagem do agente').fill('O agente deve responder de forma natural e operacional.')
+    await page.getByRole('button', { name: /Enviar ao agente/i }).click()
+    await page.getByLabel('Mensagem do agente').fill('Tambem quero fases e verificacao rastreaveis.')
+    await page.getByRole('button', { name: /Enviar ao agente/i }).click()
+
+    await page.getByRole('button', { name: /Planejar/i }).click()
+
+    await expect(page.locator('.chat-artifact-tag').filter({ hasText: 'Plan' })).toBeVisible({ timeout: 180_000 })
+
+    await page.getByRole('button', { name: /Fases/i }).click()
+
+    await expect(page.locator('.chat-artifact-tag').filter({ hasText: 'Phases' })).toBeVisible({ timeout: 180_000 })
+
+    await page.getByRole('button', { name: /Execucao/i }).click()
+
+    await expect(page.locator('.chat-artifact-tag').filter({ hasText: 'Execution' })).toBeVisible({ timeout: 180_000 })
+
+    await page.getByLabel('Mensagem do agente').fill(
+      'Tenho a seguinte evidencia: implementacao simulada com memoria operacional, plano, fases, execution e runtime validado via OpenRouter.',
+    )
+    await page.getByRole('button', { name: /Enviar ao agente/i }).click()
+    await page.getByRole('button', { name: /Verificar/i }).click()
+
+    await expect(page.locator('.chat-artifact-tag').filter({ hasText: 'Verification' })).toBeVisible({ timeout: 180_000 })
   })
 })
